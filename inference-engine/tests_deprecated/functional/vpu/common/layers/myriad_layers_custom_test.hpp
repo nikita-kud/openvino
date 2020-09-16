@@ -611,6 +611,7 @@ static void refSpatialTransform(const Blob::Ptr& src, const Blob::Ptr& theta, Bl
 static std::vector<std::string> s_CustomConfig = {
 #ifdef VPU_HAS_CUSTOM_KERNELS
     getIELibraryPath() + "/vpu_custom_kernels/customLayerBindings.xml"
+    // getIELibraryPath() + "/vpu_custom_cpp_kernels/customCppLayerBindings.xml"
 #endif
 };
 
@@ -666,8 +667,8 @@ TEST_P(myriadLayersTestsShuffleChannel_smoke, ShuffleChannel) {
 
 static std::vector<Dims> s_ShuffleChannelTensors = {
     {{1,  48, 28, 28}},
-    {{1,  96, 14, 14}},
-    {{1, 192,  7,  7}},
+    // {{1,  96, 14, 14}},
+    // {{1, 192,  7,  7}},
 };
 
 static std::vector<Group> s_ShuffleChannelGroup = {
