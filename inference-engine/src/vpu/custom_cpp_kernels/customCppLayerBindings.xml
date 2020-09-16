@@ -1,0 +1,14 @@
+<CustomLayer name="ShuffleChannel" type="CPP" version="1">
+    <Kernel entry="ShuffleChannel">
+        <Source filename="shuffle_channels.shvdlib"/>
+        <Parameters>
+            <Tensor arg-name="src_data" type="input" port-index="0" format="BFYX"/>
+            <Tensor arg-name="dst_data" type="output" port-index="0" format="BFYX"/>
+            <Scalar arg-name="C" type="int" port-index="0" source="I.F"/>
+            <Scalar arg-name="H" type="int" port-index="0" source="I.Y"/>
+            <Scalar arg-name="W" type="int" port-index="0" source="I.X"/>
+            <Scalar arg-name="G" type="int" source="group"/>
+        </Parameters>
+        <WorkSizes dim="input,0" global="F,1,1" local="1,1,1"/>
+    </Kernel>
+</CustomLayer>
