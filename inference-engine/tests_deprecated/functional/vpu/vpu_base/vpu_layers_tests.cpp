@@ -99,7 +99,7 @@ bool vpuLayersTests::wasCustomLayerInferred() const {
      auto perfMap = std::map<std::string, InferenceEngine::InferenceEngineProfileInfo>{};
     _inferRequest->GetPerformanceCounts(perfMap, nullptr);
     const auto isCustomLayer = [&](const std::pair<std::string, InferenceEngine::InferenceEngineProfileInfo>& info) {
-        return !strcmp(info.second.exec_type, "Custom");
+        return !strcmp(info.second.exec_type, "CustomCl") || !strcmp(info.second.exec_type, "CustomCpp");
     };
     return std::any_of(begin(perfMap), end(perfMap), isCustomLayer);
 }

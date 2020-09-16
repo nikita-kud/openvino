@@ -111,7 +111,7 @@ VPU_DECLARE_ENUM(StageType,
     ROIPooling = 65,
     PSROIPooling = 66,
     Interp = 67,
-    Custom = 115,
+    CustomCl = 115,
     MTCNN = 69,
     LSTMCell = 70,
     Pad = 71,
@@ -172,6 +172,7 @@ VPU_DECLARE_ENUM(StageType,
     StridedSlice = 133,
     SoftPlus = 134,
     Swish = 135,
+    CustomCpp = 136,
 )
 
 //

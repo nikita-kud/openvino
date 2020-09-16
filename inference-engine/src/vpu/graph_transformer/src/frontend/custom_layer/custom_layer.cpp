@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include <vpu/frontend/custom_layer.hpp>
+#include <vpu/frontend/custom_layer/custom_layer.hpp>
 #include <vpu/utils/numeric.hpp>
 
 #include <climits>
@@ -31,6 +31,7 @@
 
 #include <vpu/utils/simple_math.hpp>
 #include <vpu/utils/error.hpp>
+#include <vpu/compile_env.hpp>
 #include <cstring>
 
 namespace vpu {
@@ -141,8 +142,8 @@ CustomLayer::CustomLayer(std::string configDir, const pugi::xml_node& customLaye
         "Wrong custom layer XML : Node is not CustomLayer, but %s",  nodeName);
 
     const auto nodeType = XMLParseUtils::GetStrAttr(customLayer, "type");
-    VPU_THROW_UNLESS(cmp(nodeType, "MVCL"),
-        "Wrong custom layer XML : Type is not MVCL, but %s", nodeType);
+    VPU_THROW_UNLESS(cmp(nodeType, "MVCL") || cmp(nodeType, "CPP"),
+        "Wrong custom layer XML : Type is not MVCL or CPP, but %s", nodeType);
 
     const auto version = XMLParseUtils::GetIntAttr(customLayer, "version");
     VPU_THROW_UNLESS(version == 1, "Wrong custom layer XML : only version 1 is supported");
@@ -168,10 +169,18 @@ CustomLayer::CustomLayer(std::string configDir, const pugi::xml_node& customLaye
         return nodes;
     }();
 
+    auto createKernel = [&](const pugi::xml_node& node, std::string configDir) -> std::shared_ptr<CustomKernel> {
+        if (nodeType == "MVCL") {
+            return std::make_shared<CustomClKernel>(node, configDir);
+        }
+
+        return std::make_shared<CustomCppKernel>(node, configDir);
+    };
+
     if (kernelNodes.size() == 1) {
-        _kernels.emplace_back(kernelNodes.front(), _configDir);
+        _kernels.emplace_back(createKernel(kernelNodes.front(), _configDir));
     } else {
-        auto stageOrder = std::map<int, CustomKernel>{};
+        auto stageOrder = std::map<int, CustomKernel::SPtr>{};
         for (auto& kernel : kernelNodes) {
             const auto stageAttr = kernel.attribute("stage");
             VPU_THROW_UNLESS(stageAttr, "Error while binding %s custom layer: for multi-kernel binding, "
@@ -181,7 +190,7 @@ CustomLayer::CustomLayer(std::string configDir, const pugi::xml_node& customLaye
             VPU_THROW_UNLESS(stageOrder.find(stageNum) == stageOrder.end(),
                 "Error while binding %s custom layer: found duplicating stage id.", _layerName);
 
-            stageOrder.emplace(stageNum, CustomKernel{kernel, _configDir});
+            stageOrder.emplace(stageNum, createKernel(kernel, _configDir));
         }
 
         VPU_THROW_UNLESS(!stageOrder.empty(),
@@ -208,7 +217,7 @@ CustomLayer::CustomLayer(std::string configDir, const pugi::xml_node& customLaye
     };
 
     for (const auto& kernel : _kernels) {
-        for (const auto& binding : kernel.bindings()) {
+        for (const auto& binding : kernel->bindings()) {
             if (binding.type == CustomParamType::Input) {
                 addPorts(_inputs, binding);
             }
@@ -303,6 +312,32 @@ bool CustomLayer::meetsWhereRestrictions(const std::map<std::string, std::string
         }
     }
     return true;
+}
+
+SizeRuleValidator::SizeRuleValidator(
+    std::map<std::string, std::string> cnnLayerParams)
+    : _cnnLayerParams(std::move(cnnLayerParams)) {}
+
+void SizeRuleValidator::visitCpp(const CustomCppKernel& kernel) {
+    _result = true;
+}
+
+void SizeRuleValidator::visitCL(const CustomClKernel &kernel) {
+    const auto& gws = kernel.globalGridSizeRules();
+    const auto& lws = kernel.localGridSizeRules();
+
+    const auto validSizeRule = [&](const std::string& rule) {
+        return CustomLayer::isLegalSizeRule(rule, _cnnLayerParams);
+    };
+
+    const auto validGridSizes = std::all_of(begin(gws), end(gws), validSizeRule) &&
+                                std::all_of(begin(lws), end(lws), validSizeRule);
+
+    _result = validGridSizes;
+    if (!_result) {
+        const auto& env = CompileEnv::get();
+        env.log->trace("Work group grid sizes are not valid");
+    }
 }
 
 }  // namespace vpu

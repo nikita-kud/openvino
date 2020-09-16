@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "vpu/frontend/ShaveElfMetadataParser.h"
+#include "vpu/frontend/custom_layer/ShaveElfMetadataParser.h"
 #include <algorithm>
 
 namespace {

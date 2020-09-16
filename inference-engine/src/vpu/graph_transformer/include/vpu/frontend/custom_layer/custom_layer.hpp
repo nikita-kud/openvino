@@ -16,7 +16,7 @@
 
 #include <vpu/utils/enums.hpp>
 #include <vpu/utils/small_vector.hpp>
-#include <vpu/frontend/custom_kernel.hpp>
+#include <vpu/frontend/custom_layer/custom_kernel.hpp>
 
 #include <ie_common.h>
 
@@ -29,7 +29,7 @@ public:
     using Ptr = std::shared_ptr<CustomLayer>;
     explicit CustomLayer(std::string configDir, const pugi::xml_node& customLayer);
 
-    std::vector<CustomKernel> kernels() const { return _kernels; }
+    std::vector<CustomKernel::SPtr> kernels() const { return _kernels; }
     std::string layerName() const { return _layerName; }
     std::map<int, CustomDataFormat> inputs() { return _inputs; }
     std::map<int, CustomDataFormat> outputs() { return _outputs; }
@@ -47,10 +47,24 @@ private:
     std::string _layerName;
     std::map<std::string, std::string> _whereParams;
 
-    std::vector<CustomKernel> _kernels;
+    std::vector<CustomKernel::SPtr> _kernels;
 
     std::map<int, CustomDataFormat> _inputs;
     std::map<int, CustomDataFormat> _outputs;
+};
+
+class SizeRuleValidator : public CustomKernelVisitor {
+public:
+    explicit SizeRuleValidator(std::map<std::string, std::string> cnnLayerParams);
+
+    void visitCpp(const CustomCppKernel& kernel) override;
+    void visitCL(const CustomClKernel& kernel) override;
+
+    bool result() const { return _result; }
+
+private:
+    std::map<std::string, std::string> _cnnLayerParams;
+    bool _result = false;
 };
 
 };  // namespace vpu

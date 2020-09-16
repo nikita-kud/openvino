@@ -3,6 +3,7 @@
 //
 
 #include "vpu/frontend/frontend.hpp"
+#include "vpu/frontend/custom_layer/custom_layer.hpp"
 #include "vpu/utils/profiling.hpp"
 #include "vpu/compile_env.hpp"
 #include "vpu/model/data_contents/ie_blob_content.hpp"
@@ -260,19 +261,10 @@ CustomLayer::Ptr FrontEnd::getSuitableCustomLayer(const std::vector<CustomLayer:
             return false;
         }
 
+        SizeRuleValidator validator{cnnLayer->params};
         for (const auto& kernel : customLayer->kernels()) {
-            const auto& gws = kernel.globalGridSizeRules();
-            const auto& lws = kernel.localGridSizeRules();
-
-            const auto validSizeRule = [&](const std::string& rule) {
-                return CustomLayer::isLegalSizeRule(rule, cnnLayer->params);
-            };
-
-            const auto validGridSizes = std::all_of(begin(gws), end(gws), validSizeRule) &&
-                                        std::all_of(begin(lws), end(lws), validSizeRule);
-
-            if (!validGridSizes) {
-                env.log->trace("Work group grid sizes are not valid");
+            kernel->accept(validator);
+            if (!validator.result()) {
                 return false;
             }
         }

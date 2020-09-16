@@ -35,7 +35,19 @@ VPU_DECLARE_ENUM(CustomDataFormat,
 
 VPU_DECLARE_ENUM(CustomDimSource, Input, Output)
 
-struct CustomKernel final {
+class CustomCppKernel;
+class CustomClKernel;
+
+class CustomKernelVisitor {
+public:
+    virtual void visitCpp(const CustomCppKernel& kernel) = 0;
+    virtual void visitCL(const CustomClKernel& kernel) = 0;
+};
+
+class CustomKernel {
+public:
+    using SPtr = std::shared_ptr<CustomKernel>;
+
     struct KernelParam final {
         CustomParamType type = CustomParamType::Input;
         CustomDataFormat format = CustomDataFormat::Any;
@@ -47,37 +59,65 @@ struct CustomKernel final {
         int dimIdx = -1;
     };
 
-private:
-    std::string _configDir;
-    int _maxShaves = 0;
+protected:
     std::string _kernelBinary;
     SmallVector<KernelParam> _kernelParams;
-    SmallVector<std::string> _globalGridSizeRules;
-    SmallVector<std::string> _localGridSizeRules;
     SmallVector<std::string> _parameters;
-    int _kernelId = 0;
 
     CustomDimSource _wgDimSource = CustomDimSource::Input;
     int _wgDimIdx = -1;
 
+    int _maxShaves = 0;
     int _inputDataCount = 0;
 
 public:
-    explicit CustomKernel(const pugi::xml_node& node, std::string configDir);
-
-    void processParametersNode(const pugi::xml_node& node);
-    void processWorkSizesNode(const pugi::xml_node& node);
-
-    int maxShaves() const { return _maxShaves; }
     const std::string& kernelBinary() const { return _kernelBinary; }
     SmallVector<KernelParam> bindings() const { return _kernelParams; }
-    SmallVector<std::string> globalGridSizeRules() const { return _globalGridSizeRules; }
-    SmallVector<std::string> localGridSizeRules() const { return _localGridSizeRules; }
     SmallVector<std::string> parameters() const { return _parameters; }
-    int kernelId() const { return _kernelId; }
+
     CustomDimSource dimSource() const { return _wgDimSource; }
     int dimSourceIndex() const { return _wgDimIdx; }
+
+    int maxShaves() const { return _maxShaves; }
     int inputDataCount() const { return _inputDataCount; }
+
+    virtual void accept(CustomKernelVisitor& validator) const = 0;
+
+protected:
+    std::string loadKernelBinary(const pugi::xml_node& node, std::string configDir);
+    void processParametersNode(const pugi::xml_node& node);
+    std::pair<CustomDimSource, int> parseDimSource(const std::string& dims);
+    CustomDataFormat formatFromString(const std::string& str);
+    SmallVector<std::string> parseSizeRule(const std::string& size);
+};
+
+class CustomCppKernel final : public CustomKernel {
+public:
+    explicit CustomCppKernel(const pugi::xml_node& node, std::string configDir);
+
+    void accept(CustomKernelVisitor& validator) const override;
+
+protected:
+    void processWorkSizesNode(const pugi::xml_node& node);
+};
+
+class CustomClKernel final : public CustomKernel {
+private:
+    SmallVector<std::string> _globalGridSizeRules;
+    SmallVector<std::string> _localGridSizeRules;
+    int _kernelId = 0;
+
+public:
+    explicit CustomClKernel(const pugi::xml_node& node, std::string configDir);
+
+    void accept(CustomKernelVisitor& validator) const override;
+
+    SmallVector<std::string> globalGridSizeRules() const { return _globalGridSizeRules; }
+    SmallVector<std::string> localGridSizeRules() const { return _localGridSizeRules; }
+    int kernelId() const { return _kernelId; }
+
+private:
+    void processWorkSizesNode(const pugi::xml_node& node);
 };
 
 } // namespace vpu

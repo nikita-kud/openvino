@@ -4,7 +4,7 @@
 
 #include <vpu/frontend/frontend.hpp>
 
-#include <vpu/frontend/custom_layer.hpp>
+#include <vpu/frontend/custom_layer/custom_layer.hpp>
 #include <vpu/utils/simple_math.hpp>
 #include <vpu/model/data_contents/kernel_binary_content.hpp>
 #include <vpu/model/data_contents/ie_blob_content.hpp>
@@ -95,38 +95,26 @@ private:
     }
 
     void serializeParamsImpl(BlobSerializer& serializer) const override {
-        const auto& kernel = attrs().get<CustomKernel>("customKernel");
-        const auto& gws = attrs().get<SmallVector<int>>("gws");
-        const auto& lws = attrs().get<SmallVector<int>>("lws");
+        const auto& kernel = attrs().get<CustomKernel::SPtr>("customKernel");
         const auto& ports = attrs().get<std::map<std::string, int>>("ports");
         const auto& localDataSizes = attrs().get<std::map<std::string, int>>("localDataSizes");
 
-        for (int i = 0; i < gws.size(); ++i) {
-            serializer.append(static_cast<uint32_t>(gws[i] / lws[i]));
-        }
+        CustomKernelSerializer kernelSerializer{serializer, *this};
+        kernel->accept(kernelSerializer);
 
-        for (auto x : lws) {
-            serializer.append(static_cast<uint32_t>(x));
-        }
-
-        for (int i = 0; i < lws.size(); ++i) {
-            serializer.append(static_cast<uint32_t>(0));
-        }
-
-        serializer.append(static_cast<uint32_t>(kernel.maxShaves()));
-        serializer.append(static_cast<uint32_t>(kernel.kernelId()));
-        serializer.append(static_cast<uint32_t>(kernel.inputDataCount()));
+        serializer.append(static_cast<uint32_t>(kernel->maxShaves()));
+        serializer.append(static_cast<uint32_t>(kernel->inputDataCount()));
         serializer.append(static_cast<int32_t>(numInputs() + numOutputs()));
-        serializer.append(static_cast<uint32_t>(kernel.parameters().size()));
+        serializer.append(static_cast<uint32_t>(kernel->parameters().size()));
 
         std::map<std::string, CustomKernel::KernelParam> b2b;
-        for (const auto& kp : kernel.bindings()) {
+        for (const auto& kp : kernel->bindings()) {
             b2b[kp.argName] = kp;
         }
 
         IE_ASSERT(origLayer() != nullptr);
 
-        for (const auto& kp : kernel.parameters()) {
+        for (const auto& kp : kernel->parameters()) {
             const auto& parameter = b2b[kp];
 
             switch (parameter.type) {
@@ -273,9 +261,67 @@ private:
             tempEdge->tempBuffer()->serializeBuffer(serializer);
         }
     }
+
+    class CustomKernelSerializer : public CustomKernelVisitor {
+    public:
+        CustomKernelSerializer(BlobSerializer& serializer, const CustomStage& stage) :
+            _serializer(serializer), _stage(stage) {}
+
+        void visitCpp(const CustomCppKernel& kernel) override {}
+
+        void visitCL(const CustomClKernel& kernel) override {
+            const auto& gws = _stage.attrs().get<SmallVector<int>>("gws");
+            const auto& lws = _stage.attrs().get<SmallVector<int>>("lws");
+
+            for (int i = 0; i < gws.size(); ++i) {
+                _serializer.append(static_cast<uint32_t>(gws[i] / lws[i]));
+            }
+
+            for (auto x : lws) {
+                _serializer.append(static_cast<uint32_t>(x));
+            }
+
+            for (int i = 0; i < lws.size(); ++i) {
+                _serializer.append(static_cast<uint32_t>(0));
+            }
+
+            _serializer.append(static_cast<uint32_t>(kernel.kernelId()));
+        }
+
+    private:
+        BlobSerializer& _serializer;
+        const CustomStage& _stage;
+    };
 };
 
+
 }  // namespace
+
+class CustomKernelParser : public CustomKernelVisitor {
+public:
+    CustomKernelParser(Stage& stage, const std::map<std::string, std::string>& cnnLayerParams,
+                       const DataVector& inputs, const DataVector& outputs) :
+        _stage(stage), _cnnLayerParams(cnnLayerParams),
+        _inputs(inputs), _outputs(outputs) {}
+
+    void visitCpp(const CustomCppKernel& kernel) override {}
+
+    void visitCL(const CustomClKernel& kernel) override {
+        const auto& dimSource = (kernel.dimSource() == CustomDimSource::Input) ? _inputs : _outputs;
+        const auto& dataDesc = dimSource[kernel.dimSourceIndex()]->desc();
+        const auto gws = calcSizesFromParams(dataDesc, kernel.globalGridSizeRules(), _cnnLayerParams);
+        const auto lws = calcSizesFromParams(dataDesc, kernel.localGridSizeRules(), _cnnLayerParams);
+
+        _stage->attrs().set("gws", gws);
+        _stage->attrs().set("lws", lws);
+    }
+
+private:
+    Stage& _stage;
+    const std::map<std::string, std::string>& _cnnLayerParams;
+    const DataVector& _inputs;
+    const DataVector& _outputs;
+};
 
 static SmallVector<int> calcSizesFromParams(const DataDesc& desc, const SmallVector<std::string>& bufferSizeRules,
                                             std::map<std::string, std::string> layerParams) {
@@ -324,7 +370,7 @@ void FrontEnd::parseCustom(const Model& model, const ie::CNNLayerPtr& layer, con
     // Get all buffers, buffers must be unique associated by port index
     std::map<int, Data> tempBuffsMap;
     for (const auto& kernel : kernels) {
-        for (const auto& param : kernel.bindings()) {
+        for (const auto& param : kernel->bindings()) {
             if (param.type == CustomParamType::InputBuffer || param.type == CustomParamType::OutputBuffer) {
                 const auto desc = (param.dimSource == CustomDimSource::Input) ? inputs[param.dimIdx]->desc()
                                                                               : outputs[param.dimIdx]->desc();
@@ -346,7 +392,7 @@ void FrontEnd::parseCustom(const Model& model, const ie::CNNLayerPtr& layer, con
 
         // Gather inputs
         DataVector stageInputs;
-        for (auto& param : kernel.bindings()) {
+        for (auto& param : kernel->bindings()) {
             if (param.type == CustomParamType::Input) {
                 ports[param.argName] = stageInputs.size();
                 formats.emplace_back(param.format);
@@ -359,7 +405,7 @@ void FrontEnd::parseCustom(const Model& model, const ie::CNNLayerPtr& layer, con
         }
 
         // Gather data blobs
-        for (auto& param : kernel.bindings()) {
+        for (auto& param : kernel->bindings()) {
             if (param.type == CustomParamType::Data) {
                 auto blobIterator = layer->blobs.find(param.irSource);
                 if (blobIterator != layer->blobs.end()) {
@@ -378,23 +424,23 @@ void FrontEnd::parseCustom(const Model& model, const ie::CNNLayerPtr& layer, con
         formats.emplace_back(CustomDataFormat::Any);
 
         // Get kernel binary
-        auto kernelNode = _kernelNodes.find(kernel.kernelBinary());
+        auto kernelNode = _kernelNodes.find(kernel->kernelBinary());
         if (kernelNode != _kernelNodes.end()) {
             stageInputs.emplace_back((kernelNode->second));
         } else {
-            auto kernelBinaryDesc = DataDesc({kernel.kernelBinary().length()});
+            auto kernelBinaryDesc = DataDesc({kernel->kernelBinary().length()});
             kernelBinaryDesc.setType(DataType::U8);
 
             auto kernelBinary = model->addConstData(
                 layer->type + "@kernelBinary",
                 kernelBinaryDesc,
-                std::make_shared<KernelBinaryContent>(kernel.kernelBinary()));
+                std::make_shared<KernelBinaryContent>(kernel->kernelBinary()));
             stageInputs.emplace_back((kernelBinary));
-            _kernelNodes[kernel.kernelBinary()] = kernelBinary;
+            _kernelNodes[kernel->kernelBinary()] = kernelBinary;
         }
 
         DataVector stageOutputs;
-        for (auto& param : kernel.bindings()) {
+        for (auto& param : kernel->bindings()) {
             if (param.type == CustomParamType::Output) {
                 ports[param.argName] = stageInputs.size() + stageOutputs.size();
                 stageOutputs.emplace_back(outputs[param.portIndex]);
@@ -404,29 +450,25 @@ void FrontEnd::parseCustom(const Model& model, const ie::CNNLayerPtr& layer, con
             }
         }
 
+        StageType s_type = std::dynamic_pointer_cast<CustomClKernel>(kernel) != nullptr ?
+            StageType::CustomCl : StageType::CustomCpp;
         auto stage = model->addNewStage<CustomStage>(
             layer->name + ((kernels.size() == 1) ? "" : "@stage_" + std::to_string(stage_num)),
-            StageType::Custom,
+            s_type,
             layer,
             stageInputs,
             stageOutputs);
+
+        CustomKernelParser parser{stage, layer->params, inputs, outputs};
+        kernel->accept(parser);
 
         stage->attrs().set("customKernel", suitableLayer->kernels()[stage_num]);
         stage->attrs().set("ports", ports);
         stage->attrs().set("formats", formats);
 
-        const auto& dimSource = (kernel.dimSource() == CustomDimSource::Input) ? inputs : outputs;
-        const auto& dataDesc = dimSource[kernel.dimSourceIndex()]->desc();
-
-        const auto gws = calcSizesFromParams(dataDesc, kernel.globalGridSizeRules(), layer->params);
-        const auto lws = calcSizesFromParams(dataDesc, kernel.localGridSizeRules(), layer->params);
-
-        stage->attrs().set("gws", gws);
-        stage->attrs().set("lws", lws);
-
         const auto localDataSizes = [&] {
             auto sizes = std::map<std::string, int>{};
-            for (const auto& bind : kernel.bindings()) {
+            for (const auto& bind : kernel->bindings()) {
                 if (bind.type == CustomParamType::LocalData) {
                     const auto& source = bind.dimSource == CustomDimSource::Input ? inputs : outputs;
                     const auto& desc = source[bind.dimIdx]->desc();
@@ -443,7 +485,7 @@ void FrontEnd::parseCustom(const Model& model, const ie::CNNLayerPtr& layer, con
         std::map<int, DimsOrder> outputOrders;
 
         std::map<std::string, CustomKernel::KernelParam> b2b;
-        for (const auto& kp : kernel.bindings()) {
+        for (const auto& kp : kernel->bindings()) {
             b2b[kp.argName] = kp;
         }
 
@@ -454,7 +496,7 @@ void FrontEnd::parseCustom(const Model& model, const ie::CNNLayerPtr& layer, con
             { CustomDataFormat::FYX, DimsOrder::CHW }
         };
 
-        for (const auto& kp : kernel.parameters()) {
+        for (const auto& kp : kernel->parameters()) {
             const auto& parameter = b2b[kp];
 
             if (parameter.type == CustomParamType::Input) {
@@ -477,11 +519,12 @@ void FrontEnd::parseCustom(const Model& model, const ie::CNNLayerPtr& layer, con
         stage->attrs().set("inputOrders", std::move(inputOrders));
         stage->attrs().set("outputOrders", std::move(outputOrders));
 
-        int buffer_size = kernel.kernelBinary().length() + 1024;
+        int buffer_size = kernel->kernelBinary().length() + 1024;
         model->addTempBuffer(
             stage,
             DataDesc({buffer_size}));
     }
 }
+
 
 }  // namespace vpu

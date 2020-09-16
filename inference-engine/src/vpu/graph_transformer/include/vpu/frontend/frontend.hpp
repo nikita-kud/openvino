@@ -17,7 +17,7 @@
 
 #include <vpu/stage_builder.hpp>
 #include <vpu/frontend/ie_parsed_network.hpp>
-#include <vpu/frontend/custom_layer.hpp>
+#include <vpu/frontend/custom_layer/custom_layer.hpp>
 #include <vpu/model/model.hpp>
 #include <vpu/utils/enums.hpp>
 #include <vpu/utils/func_ref.hpp>
