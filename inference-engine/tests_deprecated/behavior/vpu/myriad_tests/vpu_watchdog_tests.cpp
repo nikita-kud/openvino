@@ -152,12 +152,14 @@ TEST_P(MYRIADWatchdog, canDisableWatchdog) {
 }
 
 TEST_P(MYRIADWatchdog, canDetectWhenHostSiteStalled) {
-    auto startup_devices = queryDevices(NC_PCIE);
-    if (startup_devices.unbooted >= 1) {
-        GTEST_SKIP();
-    }
-    startup_devices = queryDevices(NC_USB);
+    auto startup_devices = queryDevices(NC_ANY_PROTOCOL);
     ASSERT_GE(startup_devices.unbooted, 1);
+//    auto startup_devices = queryDevices(NC_PCIE);
+//    if (startup_devices.unbooted >= 1) {
+//        GTEST_SKIP();
+//    }
+//    startup_devices = queryDevices(NC_USB);
+//    ASSERT_GE(startup_devices.unbooted, 1);
 
     auto ctime = Time::now();
 
