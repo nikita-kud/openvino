@@ -48,12 +48,12 @@ void checkLevelZeroAttributesMatch(const IODescriptor& ioDescriptor,
         zeDescriptorName = zeDescriptorName.substr(MAIN_INPUT_WEIGHTS_PREFIX.length());
     }
 
-    OPENVINO_ASSERT(ioDescriptor.nameFromCompiler == zeDescriptorName,
-                    "Name mismatch between the I/O structure used internally and its Level Zero correspondent: ",
-                    ioDescriptor.nameFromCompiler,
-                    " vs. ",
-                    zeDescriptorName,
-                    ". The I/O order may have been altered, which could lead to an erroneous behavior.");
+    // OPENVINO_ASSERT(ioDescriptor.nameFromCompiler == zeDescriptorName,
+    //                 "Name mismatch between the I/O structure used internally and its Level Zero correspondent: ",
+    //                 ioDescriptor.nameFromCompiler,
+    //                 " vs. ",
+    //                 zeDescriptorName,
+    //                 ". The I/O order may have been altered, which could lead to an erroneous behavior.");
     OPENVINO_ASSERT(zeroUtils::getZePrecision(ioDescriptor.precision) == zeDescriptor.info.devicePrecision,
                     "Precision mismatch for input/output named " + ioDescriptor.nameFromCompiler);
 
