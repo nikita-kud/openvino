@@ -93,8 +93,13 @@ private:
      */
     void run_init(const std::shared_ptr<IExecutor>& initExecutor);
 
+    const ov::SoPtr<ICompiler> _compiler;
+
     std::shared_ptr<const NetworkDescription> _networkPtr;
+    std::shared_ptr<const NetworkDescription> _networkInitPtr;
+    mutable bool writeInit = false;
     const std::shared_ptr<const ov::Model> _model;
+    std::shared_ptr<ov::Model> _initModel;
     Config _config;
     Logger _logger;
     const std::shared_ptr<IDevice> _device;
@@ -110,8 +115,6 @@ private:
     // properties map: {name -> [supported, mutable, eval function]}
     std::map<std::string, std::tuple<bool, ov::PropertyMutability, std::function<ov::Any(const Config&)>>> _properties;
     std::vector<ov::PropertyName> _supportedProperties;
-
-    const ov::SoPtr<ICompiler> _compiler;
 };
 
 }  //  namespace intel_npu
