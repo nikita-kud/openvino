@@ -21,6 +21,7 @@
 #include "openvino/op/parameter.hpp"
 #include "openvino/runtime/intel_npu/properties.hpp"
 #include "openvino/runtime/properties.hpp"
+#include "openvino/runtime/tensor.hpp"
 #include "plugin_compiler_adapter.hpp"
 #include "remote_context.hpp"
 #include "zero_backend.hpp"
@@ -52,7 +53,8 @@ std::shared_ptr<ov::Model> create_dummy_model(const std::vector<IODescriptor>& i
     ov::NodeVector results;
 
     for (const IODescriptor& inputDescriptor : inputDescriptors) {
-        if (inputDescriptor.isStateInput || inputDescriptor.isStateOutput || inputDescriptor.isShapeTensor) {
+        if (inputDescriptor.isStateInput || inputDescriptor.isStateOutput || inputDescriptor.isShapeTensor ||
+            inputDescriptor.isInitInputWeights || inputDescriptor.isMainInputWeights) {
             continue;
         }
 
@@ -71,7 +73,8 @@ std::shared_ptr<ov::Model> create_dummy_model(const std::vector<IODescriptor>& i
     // constant can't have dynamic shape). The dummy tensor was also brought in order to register the correct,
     // potentially dynamic, output shape.
     for (const IODescriptor& outputDescriptor : outputDescriptors) {
-        if (outputDescriptor.isStateInput || outputDescriptor.isStateOutput || outputDescriptor.isShapeTensor) {
+        if (outputDescriptor.isStateInput || outputDescriptor.isStateOutput || outputDescriptor.isShapeTensor ||
+            outputDescriptor.isInitOutputWeights) {
             continue;
         }
 
@@ -574,9 +577,19 @@ Plugin::Plugin()
           [](const Config& config) {
               return config.getString<BACKEND_COMPILATION_PARAMS>();
           }}},
-        {ov::intel_npu::batch_mode.name(), {false, ov::PropertyMutability::RW, [](const Config& config) {
-                                                return config.getString<BATCH_MODE>();
-                                            }}}};
+        {ov::intel_npu::batch_mode.name(),
+         {false,
+          ov::PropertyMutability::RW,
+          [](const Config& config) {
+              return config.getString<BATCH_MODE>();
+          }}},
+        {ov::intel_npu::separate_weights.name(),
+         {false,
+          ov::PropertyMutability::RW,
+          [](const Config& config) {
+              return config.getString<SEPARATE_WEIGHTS>();
+          }}},
+    };
 
     for (auto& property : _properties) {
         if (std::get<0>(property.second)) {
@@ -703,10 +716,30 @@ std::shared_ptr<ov::ICompiledModel> Plugin::compile_model(const std::shared_ptr<
     auto compiler = getCompiler(localConfig);
 
     OV_ITT_TASK_NEXT(PLUGIN_COMPILE_MODEL, "compile");
+
     std::shared_ptr<intel_npu::IGraph> graph;
+    std::shared_ptr<intel_npu::IGraph> initGraph;
+    std::shared_ptr<ov::Model> initModel;
+
     try {
         _logger.debug("performing compile");
-        graph = compiler->compile(model, localConfig);
+
+        if (!localConfig.get<SEPARATE_WEIGHTS>()) {
+            graph = compiler->compile(model, localConfig);
+        } else {
+            initModel = model->clone();
+
+            auto begin = std::chrono::steady_clock::now();
+            const std::vector<std::shared_ptr<intel_npu::IGraph>> initMainGraph =
+                compiler->compileWS(initModel, localConfig);
+            auto end = std::chrono::steady_clock::now();
+            std::cout << "compiler->compileWS() call "
+                      << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]"
+                      << std::endl;
+
+            initGraph = initMainGraph[0];
+            graph = initMainGraph[1];
+        }
     } catch (const std::exception& ex) {
         OPENVINO_THROW(ex.what());
     } catch (...) {
@@ -716,7 +749,13 @@ std::shared_ptr<ov::ICompiledModel> Plugin::compile_model(const std::shared_ptr<
 
     std::shared_ptr<ov::ICompiledModel> compiledModel;
     try {
-        compiledModel = std::make_shared<CompiledModel>(original_model, shared_from_this(), device, graph, localConfig);
+        compiledModel = std::make_shared<CompiledModel>(original_model,
+                                                        shared_from_this(),
+                                                        device,
+                                                        graph,
+                                                        localConfig,
+                                                        initGraph,
+                                                        initModel);
     } catch (const std::exception& ex) {
         OPENVINO_THROW(ex.what());
     } catch (...) {
@@ -774,22 +813,64 @@ std::shared_ptr<ov::ICompiledModel> Plugin::import_model(std::istream& stream, c
     try {
         auto compiler = getCompiler(localConfig);
 
-        auto graphSize = getFileSize(stream);
+        if (!localConfig.get<SEPARATE_WEIGHTS>()) {
+            auto graphSize = getFileSize(stream);
 
-        std::vector<uint8_t> blob(graphSize);
-        stream.read(reinterpret_cast<char*>(blob.data()), graphSize);
-        if (!stream) {
-            OPENVINO_THROW("Failed to read data from stream!");
+            std::vector<uint8_t> blob(graphSize);
+            stream.read(reinterpret_cast<char*>(blob.data()), graphSize);
+            if (!stream) {
+                OPENVINO_THROW("Failed to read data from stream!");
+            }
+            _logger.debug("Successfully read %zu bytes into blob.", graphSize);
+
+            auto graph = compiler->parse(std::move(blob), localConfig);
+            graph->update_network_name("net" + std::to_string(_compiledModelLoadCounter++));
+
+            const std::shared_ptr<ov::Model> modelDummy =
+                create_dummy_model(graph->get_metadata().inputs, graph->get_metadata().outputs);
+
+            compiledModel = std::make_shared<CompiledModel>(modelDummy, shared_from_this(), device, graph, localConfig);
+        } else {
+            size_t xmlSize;
+            size_t binSize;
+            size_t blobSize;
+            size_t initBlobSize;
+            std::string xml;
+
+            stream >> xmlSize;
+            xml.resize(xmlSize);
+            stream.read(xml.data(), xmlSize);
+
+            stream >> binSize;
+            ov::Tensor weightsTensor(ov::element::Type_t::u8, ov::Shape({binSize}));
+            stream.read(reinterpret_cast<char*>(weightsTensor.data()), binSize);
+
+            const std::shared_ptr<ov::Model> initModel = get_core()->read_model(xml, weightsTensor);
+
+            stream >> blobSize;
+            std::vector<uint8_t> blob(blobSize);
+            stream.read(reinterpret_cast<char*>(blob.data()), blobSize);
+
+            stream >> initBlobSize;
+            std::vector<uint8_t> initBlob(initBlobSize);
+            stream.read(reinterpret_cast<char*>(initBlob.data()), initBlobSize);
+
+            auto initGraph = compiler->parse(std::move(initBlob), localConfig);
+            initGraph->update_network_name("net" + std::to_string(_compiledModelLoadCounter++));
+            auto graph = compiler->parse(std::move(blob), localConfig);
+            graph->update_network_name("net" + std::to_string(_compiledModelLoadCounter++));
+
+            const std::shared_ptr<ov::Model> modelDummy =
+                create_dummy_model(graph->get_metadata().inputs, graph->get_metadata().outputs);
+
+            compiledModel = std::make_shared<CompiledModel>(modelDummy,
+                                                            shared_from_this(),
+                                                            device,
+                                                            graph,
+                                                            localConfig,
+                                                            initGraph,
+                                                            initModel);
         }
-        _logger.debug("Successfully read %zu bytes into blob.", graphSize);
-
-        auto graph = compiler->parse(std::move(blob), localConfig);
-        graph->update_network_name("net" + std::to_string(_compiledModelLoadCounter++));
-
-        const std::shared_ptr<ov::Model> modelDummy =
-            create_dummy_model(graph->get_metadata().inputs, graph->get_metadata().outputs);
-
-        compiledModel = std::make_shared<CompiledModel>(modelDummy, shared_from_this(), device, graph, localConfig);
     } catch (const std::exception& ex) {
         OPENVINO_THROW("Can't import network: ", ex.what());
     } catch (...) {

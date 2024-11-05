@@ -4,9 +4,69 @@
 
 #include "zero_device.hpp"
 
+#include <transformations/common_optimizations/add_fake_quantize_fusion.hpp>
+#include <transformations/common_optimizations/batch_to_space_fusion.hpp>
+#include <transformations/common_optimizations/conv_mul_fusion.hpp>
+#include <transformations/common_optimizations/convert_quantize_dequantize.hpp>
+#include <transformations/common_optimizations/depth_to_space_fusion.hpp>
+#include <transformations/common_optimizations/dropout_with_random_uniform_replacer.hpp>
+#include <transformations/common_optimizations/fq_mul_fusion.hpp>
+#include <transformations/common_optimizations/lin_op_sequence_fusion.hpp>
+#include <transformations/common_optimizations/moc_transformations.hpp>
+#include <transformations/common_optimizations/mul_conv_fusion.hpp>
+#include <transformations/common_optimizations/mvn_fusion.hpp>
+#include <transformations/common_optimizations/pad_fusion.hpp>
+#include <transformations/common_optimizations/pull_through_reduce.hpp>
+#include <transformations/common_optimizations/reduce_reshape_fusion.hpp>
+#include <transformations/common_optimizations/relu_fake_quantize_fusion.hpp>
+#include <transformations/common_optimizations/rms_fusion.hpp>
+#include <transformations/common_optimizations/shuffle_channels_fusion.hpp>
+#include <transformations/common_optimizations/space_to_batch_fusion.hpp>
+#include <transformations/common_optimizations/strides_optimization.hpp>
+#include <transformations/common_optimizations/transpose_to_reshape.hpp>
+#include <transformations/common_optimizations/weights_dequantize_to_fake_quantize.hpp>
+#include <transformations/control_flow/unroll_if.hpp>
+#include <transformations/control_flow/unroll_tensor_iterator.hpp>
+#include <transformations/fp16_compression/mark_decompression_convert_constant_folding.hpp>
+#include <transformations/init_node_info.hpp>
+#include <transformations/low_precision/mark_dequantization_subgraph.hpp>
+#include <transformations/op_conversions/batch_norm_decomposition.hpp>
+#include <transformations/op_conversions/bidirectional_sequences_decomposition.hpp>
+#include <transformations/op_conversions/convert_avgpool_downgrade.hpp>
+#include <transformations/op_conversions/convert_broadcast_to_tiles.hpp>
+#include <transformations/op_conversions/convert_convertlike.hpp>
+#include <transformations/op_conversions/convert_deformable_conv_v8_to_v1.hpp>
+#include <transformations/op_conversions/convert_gather_upgrade.hpp>
+#include <transformations/op_conversions/convert_interpolate11_downgrade.hpp>
+#include <transformations/op_conversions/convert_interpolate1_to_interpolate4.hpp>
+#include <transformations/op_conversions/convert_maxpool_downgrade.hpp>
+#include <transformations/op_conversions/convert_nms9_to_nms_ie_internal.hpp>
+#include <transformations/op_conversions/convert_pad12_downgrade.hpp>
+#include <transformations/op_conversions/convert_pad_to_group_conv.hpp>
+#include <transformations/op_conversions/convert_previous_nms_to_nms_9.hpp>
+#include <transformations/op_conversions/convert_reduce_to_pooling.hpp>
+#include <transformations/op_conversions/convert_scatter_elements_update12_downgrade.hpp>
+#include <transformations/op_conversions/convert_sequences_to_tensor_iterator.hpp>
+#include <transformations/op_conversions/convert_shapeof3.hpp>
+#include <transformations/op_conversions/convert_slice_to_strided_slice.hpp>
+#include <transformations/op_conversions/convert_softmax_upgrade.hpp>
+#include <transformations/op_conversions/convert_topk11_downgrade.hpp>
+#include <transformations/op_conversions/detection_output_downgrade.hpp>
+#include <transformations/op_conversions/einsum_decomposition.hpp>
+#include <transformations/op_conversions/gelu7_downgrade.hpp>
+#include <transformations/op_conversions/log_softmax_decomposition.hpp>
+#include <transformations/op_conversions/normalize_l2_decomposition.hpp>
+#include <transformations/op_conversions/scaled_dot_product_attention_decomposition.hpp>
+#include <transformations/op_conversions/softmax_decomposition.hpp>
+#include <transformations/rt_info/fused_names_attribute.hpp>
+#include <transformations/utils/utils.hpp>
+
 #include "intel_npu/common/itt.hpp"
+#include "intel_npu/prefix.hpp"
 #include "intel_npu/utils/zero/zero_api.hpp"
 #include "intel_npu/utils/zero/zero_utils.hpp"
+#include "openvino/core/type/element_iterator.hpp"
+#include "openvino/op/constant.hpp"
 #include "zero_host_tensor.hpp"
 #include "zero_infer_request.hpp"
 #include "zero_remote_tensor.hpp"
@@ -63,6 +123,105 @@ ZeroDevice::ZeroDevice(const std::shared_ptr<ZeroInitStructsHolder>& initStructs
         device_gops[ov::element::i8] = gops;
         device_gops[ov::element::f16] = 0.5f * gops;
     }
+}
+
+std::unordered_map<std::string, std::shared_ptr<ov::ITensor>> ZeroDevice::runInit(
+    const std::shared_ptr<IGraph>& initGraph,
+    const std::shared_ptr<const ov::Model>& model,
+    const ov::SoPtr<ov::IRemoteContext>& context,
+    const Config& config) {
+    std::unordered_map<size_t, TensorData> constantIdToTensorData;
+    std::vector<std::vector<std::optional<TensorData>>> inputTensorsData;
+    std::vector<std::optional<TensorData>> outputTensorsData;
+    std::vector<std::shared_ptr<ov::ITensor>> inputHostTensors;
+    std::unordered_map<std::string, std::shared_ptr<ov::ITensor>> outputHostTensors;
+
+    std::chrono::steady_clock::time_point begin;
+    std::chrono::steady_clock::time_point end;
+
+    // Match the inputs of the "init" model with the Constant nodes of the original model
+    begin = std::chrono::steady_clock::now();
+    size_t constantIndex = 0;
+    for (auto&& node : model->get_ordered_ops()) {
+        if (!ov::is_type<ov::op::v0::Constant>(node)) {
+            continue;
+        }
+
+        const auto constantNode = std::static_pointer_cast<ov::op::v0::Constant>(node);
+        const void* address = constantNode->get_data_ptr();
+        const size_t size = constantNode->get_byte_size();
+        constantIdToTensorData.emplace(constantIndex++, TensorData{address, size});
+    }
+    end = std::chrono::steady_clock::now();
+    std::cout << "getting constant IDs " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()
+              << "[ms]" << std::endl;
+
+    begin = std::chrono::steady_clock::now();
+    for (const auto& descriptor : initGraph->get_input_descriptors()) {
+        size_t id = std::stoi(std::string(descriptor.info.name).substr(INIT_INPUT_WEIGHTS_PREFIX.length()));
+        OPENVINO_ASSERT(constantIdToTensorData.count(id), "Mismatch between weights IDs and parsed inputs");
+        const ov::SoPtr<ov::ITensor> hostTensor =
+            createHostTensor(context._ptr,
+                             zeroUtils::getOVPrecision(descriptor.info.devicePrecision),
+                             zeroUtils::getOVShape(descriptor.info),
+                             config);
+
+        OPENVINO_ASSERT(constantIdToTensorData.at(id).size == hostTensor->get_byte_size(),
+                        "Byte size mismatch for ",
+                        descriptor.info.name);
+        std::memcpy(hostTensor->data(), constantIdToTensorData.at(id).mem, hostTensor->get_byte_size());
+
+        inputTensorsData.push_back({TensorData{hostTensor->data(), hostTensor->get_byte_size()}});
+        inputHostTensors.push_back(hostTensor._ptr);
+    }
+    end = std::chrono::steady_clock::now();
+    std::cout << "Setting init inputs " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()
+              << "[ms]" << std::endl;
+
+    begin = std::chrono::steady_clock::now();
+    for (const auto& descriptor : initGraph->get_output_descriptors()) {
+        const ov::SoPtr<ov::ITensor> hostTensor =
+            createHostTensor(context._ptr,
+                             zeroUtils::getOVPrecision(descriptor.info.devicePrecision),
+                             zeroUtils::getOVShape(descriptor.info),
+                             config);
+        outputTensorsData.push_back(TensorData{hostTensor->data(), hostTensor->get_byte_size()});
+        outputHostTensors.emplace(std::string(descriptor.info.name).substr(INIT_OUTPUT_WEIGHTS_PREFIX.length()),
+                                  hostTensor._ptr);
+    }
+    end = std::chrono::steady_clock::now();
+    std::cout << "Creating output tensors "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]" << std::endl;
+
+    auto progilingPool = zeroProfiling::ProfilingPool(static_cast<ze_graph_handle_t>(initGraph->get_handle()),
+                                                      zeroProfiling::POOL_SIZE,
+                                                      _initStructs->getProfilingDdiTable());
+    auto profilingQuery =
+        zeroProfiling::ProfilingQuery(0, _initStructs->getDevice(), _initStructs->getProfilingDdiTable());
+
+    ze_device_properties_t properties;
+    properties.stype = ZE_STRUCTURE_TYPE_DEVICE_PROPERTIES;
+    THROW_ON_FAIL_FOR_LEVELZERO("zeDeviceGetProperties", zeDeviceGetProperties(_initStructs->getDevice(), &properties));
+
+    auto groupOrdinal = zeroUtils::findGroupOrdinal(_initStructs->getDevice(), properties);
+    const auto pipeline = std::make_unique<Pipeline>(config,
+                                                     _initStructs,
+                                                     initGraph,
+                                                     progilingPool,
+                                                     profilingQuery,
+                                                     nullptr,
+                                                     inputTensorsData,
+                                                     outputTensorsData,
+                                                     /*numberOfCommandLists*/ 1,
+                                                     groupOrdinal);
+    begin = std::chrono::steady_clock::now();
+    pipeline->push();
+    pipeline->pull();
+    end = std::chrono::steady_clock::now();
+    std::cout << "Running the pipeline " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()
+              << "[ms]" << std::endl;
+
+    return outputHostTensors;
 }
 
 std::string ZeroDevice::getName() const {
@@ -182,7 +341,7 @@ ov::SoPtr<ov::IRemoteTensor> ZeroDevice::createRemoteTensor(std::shared_ptr<ov::
                                                             const Config& config,
                                                             ov::intel_npu::TensorType tensor_type,
                                                             ov::intel_npu::MemType mem_type,
-                                                            void* mem) {
+                                                            const void* mem) {
     return {std::make_shared<
         ZeroRemoteTensor>(context, _initStructs, element_type, shape, config, tensor_type, mem_type, mem)};
 };

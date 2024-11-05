@@ -27,6 +27,12 @@ public:
 
     virtual void export_blob(std::ostream& stream) const = 0;
 
+    virtual void custom_export(std::ostream& stream,
+                               const std::shared_ptr<IGraph> initGraph,
+                               const std::shared_ptr<ov::Model> initModel) const {
+        OPENVINO_NOT_IMPLEMENTED;
+    }
+
     virtual std::vector<ov::ProfilingInfo> process_profiling_output(const std::vector<uint8_t>& profData,
                                                                     const Config& config) const = 0;
 
@@ -84,6 +90,8 @@ public:
         return _mutex;
     }
 
+    std::vector<uint8_t> _blob;
+
 protected:
     ze_graph_handle_t _handle = nullptr;
     NetworkMetadata _metadata;
@@ -96,8 +104,6 @@ protected:
     // Used to protect zero pipeline creation in the graph. The pipeline should be created only once per graph when the
     // first inference starts running
     std::mutex _mutex;
-
-    std::vector<uint8_t> _blob;
 };
 
 }  // namespace intel_npu

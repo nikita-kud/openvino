@@ -6,6 +6,7 @@
 
 #include <ze_graph_ext.h>
 
+#include <fstream>
 #include <regex>
 #include <string_view>
 
@@ -137,6 +138,51 @@ std::string rankToLegacyLayoutString(const size_t rank) {
     }
 }
 
+/**
+ * @brief Just for the PoC purpose
+ *
+ * @param stream
+ * @return size_t
+ */
+size_t getFileSize(std::istream& stream) {
+    if (!stream) {
+        OPENVINO_THROW("Stream is in bad status! Please check the passed stream status!");
+    }
+
+    const size_t streamStart = stream.tellg();
+    stream.seekg(0, std::ios_base::end);
+    const size_t streamEnd = stream.tellg();
+    stream.seekg(streamStart, std::ios_base::beg);
+
+    if (streamEnd < streamStart) {
+        OPENVINO_THROW("Invalid stream size: streamEnd (",
+                       streamEnd,
+                       ") is not larger than streamStart (",
+                       streamStart,
+                       ")!");
+    }
+
+    return streamEnd - streamStart;
+}
+
+std::vector<uint8_t> readCompiledModel(std::string_view path) {
+    std::ifstream inputStream(path.data());
+    if (!inputStream) {
+        OPENVINO_THROW("Could not open the file");
+    }
+
+    auto graphSize = getFileSize(inputStream);
+
+    std::vector<uint8_t> blob(graphSize);
+    inputStream.read(reinterpret_cast<char*>(blob.data()), graphSize);
+    if (!inputStream) {
+        OPENVINO_THROW("Failed to read data from stream!");
+    }
+    inputStream.close();
+
+    return blob;
+}
+
 }  // namespace
 
 namespace intel_npu {
@@ -226,6 +272,16 @@ std::shared_ptr<IGraph> DriverCompilerAdapter::compile(const std::shared_ptr<con
                                          std::move(networkMeta),
                                          config,
                                          std::nullopt);
+}
+
+std::vector<std::shared_ptr<IGraph>> DriverCompilerAdapter::compileWS(const std::shared_ptr<ov::Model>& model,
+                                                                      const Config& config) const {
+    std::vector<uint8_t> compiledModel1 =
+        readCompiledModel("/home/razvanapetroaie/models/weights_separation/resnet-50-blobs/MTL-resnet_f16/init.blob");
+    std::vector<uint8_t> compiledModel2 =
+        readCompiledModel("/home/razvanapetroaie/models/weights_separation/resnet-50-blobs/MTL-resnet_f16/main.blob");
+
+    return {parse(compiledModel1, config), parse(compiledModel2, config)};
 }
 
 std::shared_ptr<IGraph> DriverCompilerAdapter::parse(std::vector<uint8_t> network, const Config& config) const {
@@ -586,6 +642,12 @@ std::string DriverCompilerAdapter::serializeConfig(const Config& config,
     umdcachestring << ov::intel_npu::bypass_umd_caching.name() << KEY_VALUE_SEPARATOR << VALUE_DELIMITER << "\\S+"
                    << VALUE_DELIMITER;
     content = std::regex_replace(content, std::regex(umdcachestring.str()), "");
+
+    // SEPARATE_WEIGHTS does not involve the compiler (yet)
+    std::ostringstream separateWeightsStream;
+    separateWeightsStream << ov::intel_npu::separate_weights.name() << KEY_VALUE_SEPARATOR << VALUE_DELIMITER << "\\S+"
+                          << VALUE_DELIMITER;
+    content = std::regex_replace(content, std::regex(separateWeightsStream.str()), "");
 
     // FINAL step to convert prefixes of remaining params, to ensure backwards compatibility
     // From 5.0.0, driver compiler start to use NPU_ prefix, the old version uses VPU_ prefix
