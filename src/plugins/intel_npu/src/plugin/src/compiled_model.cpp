@@ -108,18 +108,18 @@ std::shared_ptr<ov::ISyncInferRequest> CompiledModel::create_sync_infer_request(
 void CompiledModel::export_model(std::ostream& stream) const {
     _logger.debug("CompiledModel::export_model");
 
-    if (_config.get<SEPARATE_WEIGHTS>()) {
-        _graph->custom_export(stream, _initGraph, _initModel);
-        return;
-    }
+    // if (_config.get<SEPARATE_WEIGHTS>()) {
+    //     _graph->custom_export(stream, _initGraph, _initModel);
+    //     return;
+    // }
 
     // DEBUG EXPORT
-    // if (!exportInitFlag) {
-    //     _graph->export_blob(stream);
-    //     exportInitFlag = true;
-    // } else {
-    //     _initGraph->export_blob(stream);
-    // }
+    if (!exportInitFlag) {
+        _graph->export_blob(stream);
+        exportInitFlag = true;
+    } else {
+        _initGraph->export_blob(stream);
+    }
 }
 
 std::shared_ptr<const ov::Model> CompiledModel::get_runtime_model() const {
