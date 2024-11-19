@@ -131,13 +131,49 @@ std::vector<std::shared_ptr<IGraph>> PluginCompilerAdapter::compileWS(const std:
                                                                       const Config& config) const {
     OV_ITT_TASK_CHAIN(COMPILE_BLOB, itt::domains::NPUPlugin, "PluginCompilerAdapter", "compileWS");
 
-    _logger.debug("compile start");
-    const std::vector<std::shared_ptr<NetworkDescription>> initMainNetworkDescriptions =
-        _compiler->compileWS(model, config);
-    _logger.debug("compile end");
+    // TODO: Maybe add SEPARATE_WEIGHTS_VERSION option? 
 
-    auto initNetworkDescription = initMainNetworkDescriptions[0];
-    auto mainNetworkDescription = initMainNetworkDescriptions[1];
+    // _logger.debug("compile start");
+    // const std::vector<std::shared_ptr<NetworkDescription>> initMainNetworkDescriptions =
+    //     _compiler->compileWS_v1(model, config);
+    // _logger.debug("compile end");
+
+    // auto initNetworkDescription = initMainNetworkDescriptions[0];
+    // auto mainNetworkDescription = initMainNetworkDescriptions[1];
+
+    const auto starts_with = [](const std::string& str, const std::string& prefix) {
+        return str.substr(0, prefix.size()) == prefix;
+    };
+
+    const auto isInit = [&](std::string name) {
+        return starts_with(name, "init");
+    };
+    
+    const auto isMain = [&](std::string name) {
+        return starts_with(name, "main");
+    };
+
+    _logger.debug("compile start");
+    std::vector<std::shared_ptr<NetworkDescription>> initDscrs;
+    std::shared_ptr<NetworkDescription> mainNetworkDescription;
+
+    while(auto networkDescription = _compiler->compileWS_v2(model, config)) {
+        if(isInit(networkDescription->metadata.name)) {
+            initDscrs.push_back(networkDescription);
+            continue;
+        }
+
+        if(!isMain(networkDescription->metadata.name)) {
+            throw std::runtime_error("Unexpected network name: " + networkDescription->metadata.name);
+        }
+
+        mainNetworkDescription = std::move(networkDescription);
+        break;
+    }
+
+    // FIXME
+    auto initNetworkDescription = initDscrs[0];
+    _logger.debug("compile end");
 
     ze_graph_handle_t initGraphHandle = nullptr;
     ze_graph_handle_t mainGraphHandle = nullptr;
