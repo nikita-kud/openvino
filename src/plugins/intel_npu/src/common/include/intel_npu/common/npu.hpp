@@ -58,6 +58,8 @@ class ICompilerAdapter {
 public:
     virtual std::shared_ptr<IGraph> compile(const std::shared_ptr<const ov::Model>& model,
                                             const Config& config) const = 0;
+    virtual std::vector<std::shared_ptr<IGraph>> compileWS(const std::shared_ptr<ov::Model>& model,
+                                                           const Config& config) const = 0;
     virtual std::shared_ptr<IGraph> parse(std::vector<uint8_t> network, const Config& config) const = 0;
     virtual ov::SupportedOpsMap query(const std::shared_ptr<const ov::Model>& model, const Config& config) const = 0;
 
@@ -69,6 +71,15 @@ public:
 class IDevice : public std::enable_shared_from_this<IDevice> {
 public:
     using Uuid = ov::device::UUID;
+
+    /**
+     * @brief TODO
+     */
+    virtual std::pair<std::unordered_map<std::string, std::shared_ptr<ov::ITensor>>, ov::SoPtr<ov::ITensor>> runInit(
+        const std::shared_ptr<IGraph>& initGraph,
+        const std::shared_ptr<const ov::Model>& model,
+        const ov::SoPtr<ov::IRemoteContext>& context,
+        const Config& config) = 0;
 
     virtual std::string getName() const = 0;
     virtual std::string getFullDeviceName() const = 0;
@@ -95,7 +106,7 @@ public:
         const Config& config,
         ov::intel_npu::TensorType tensor_type = ov::intel_npu::TensorType::BINDED,
         ov::intel_npu::MemType mem_type = ov::intel_npu::MemType::L0_INTERNAL_BUF,
-        void* mem = nullptr);
+        const void* mem = nullptr);
 
     virtual ov::SoPtr<ov::ITensor> createHostTensor(std::shared_ptr<ov::IRemoteContext> context,
                                                     const ov::element::Type& element_type,

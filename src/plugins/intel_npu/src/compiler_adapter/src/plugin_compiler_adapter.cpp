@@ -106,6 +106,66 @@ std::shared_ptr<IGraph> PluginCompilerAdapter::compile(const std::shared_ptr<con
                                          config);
 }
 
+std::vector<std::shared_ptr<IGraph>> PluginCompilerAdapter::compileWS(const std::shared_ptr<ov::Model>& model,
+                                                                      const Config& config) const {
+    OV_ITT_TASK_CHAIN(COMPILE_BLOB, itt::domains::NPUPlugin, "PluginCompilerAdapter", "compileWS");
+
+    std::shared_ptr<NetworkDescription> initNetworkDescription;
+    std::shared_ptr<NetworkDescription> mainNetworkDescription;
+
+    _logger.debug("compile start");
+
+    switch (config.get<SEPARATE_WEIGHTS_VERSION>()) {
+    case 1: {
+        const std::vector<std::shared_ptr<NetworkDescription>> initMainNetworkDescriptions =
+            _compiler->compileWS_v1(model, config);
+
+        initNetworkDescription = initMainNetworkDescriptions[0];
+        mainNetworkDescription = initMainNetworkDescriptions[1];
+    } break;
+    case 2: {
+        initNetworkDescription = _compiler->compileWS_v2(model, config);
+        mainNetworkDescription = _compiler->compileWS_v2(model, config);
+    } break;
+    default:
+        OPENVINO_THROW("Invalid \"SEPARATE_WEIGHTS_VERSION\" value found within the \"compileWS\" call");
+        break;
+    }
+
+    _logger.debug("compile end");
+
+    ze_graph_handle_t initGraphHandle = nullptr;
+    ze_graph_handle_t mainGraphHandle = nullptr;
+
+    if (_zeGraphExt) {
+        // Depending on the config, we may get an error when trying to get the graph handle from the compiled network
+        try {
+            initGraphHandle = _zeGraphExt->getGraphHandle(initNetworkDescription->compiledNetwork);
+            mainGraphHandle = _zeGraphExt->getGraphHandle(mainNetworkDescription->compiledNetwork);
+        } catch (...) {
+            _logger.info("Failed to obtain the level zero graph handle. Inference requests for this model are not "
+                         "allowed. Only exports are available");
+        }
+    }
+
+    auto initPluginGraph = std::make_shared<PluginGraph>(_zeGraphExt,
+                                                         _compiler,
+                                                         _zeroInitStruct,
+                                                         initGraphHandle,
+                                                         std::move(initNetworkDescription->metadata),
+                                                         std::move(initNetworkDescription->compiledNetwork),
+                                                         config);
+    auto mainPluginGraph = std::make_shared<PluginGraph>(_zeGraphExt,
+                                                         _compiler,
+                                                         _zeroInitStruct,
+                                                         mainGraphHandle,
+                                                         std::move(mainNetworkDescription->metadata),
+                                                         std::move(mainNetworkDescription->compiledNetwork),
+                                                         config);
+
+    return {initPluginGraph, mainPluginGraph};
+}
+
 std::shared_ptr<IGraph> PluginCompilerAdapter::parse(std::vector<uint8_t> network, const Config& config) const {
     OV_ITT_TASK_CHAIN(PARSE_BLOB, itt::domains::NPUPlugin, "PluginCompilerAdapter", "parse");
 
