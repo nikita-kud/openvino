@@ -192,11 +192,8 @@ std::unordered_map<std::string, std::shared_ptr<ov::ITensor>> ZeroDevice::runIni
     std::cout << "Creating output tensors "
               << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]" << std::endl;
 
-    auto progilingPool = zeroProfiling::ProfilingPool(static_cast<ze_graph_handle_t>(initGraph->get_handle()),
-                                                      zeroProfiling::POOL_SIZE,
-                                                      _initStructs->getProfilingDdiTable());
-    auto profilingQuery =
-        zeroProfiling::ProfilingQuery(0, _initStructs->getDevice(), _initStructs->getProfilingDdiTable());
+    auto progilingPool = zeroProfiling::ProfilingPool(_initStructs, initGraph, zeroProfiling::POOL_SIZE);
+    auto profilingQuery = zeroProfiling::ProfilingQuery(_initStructs, 0);
 
     ze_device_properties_t properties = {};
     properties.stype = ZE_STRUCTURE_TYPE_DEVICE_PROPERTIES;
