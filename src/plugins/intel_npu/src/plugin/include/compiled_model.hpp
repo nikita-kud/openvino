@@ -76,6 +76,7 @@ private:
     mutable std::unordered_map<std::string, std::shared_ptr<ov::ITensor>> _weightsInputs;
     mutable ov::SoPtr<ov::ITensor> _initOutputsTensor;
 
+    // mutable bool exportInitFlag = false;
     std::shared_ptr<IGraph> _graph;
     std::shared_ptr<IGraph> _initGraph;
     std::shared_ptr<ov::Model> _initModel;
