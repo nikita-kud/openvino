@@ -38,6 +38,12 @@ void check_level_zero_attributes_match(const IODescriptor& ioDescriptor, const A
         zeDescriptorName = zeDescriptorName.substr(ASSIGN_PREFIX.length());
     } else if (isShapeTensorName(zeDescriptorName)) {
         zeDescriptorName = zeDescriptorName.substr(SHAPE_TENSOR_PREFIX.length());
+    } else if (isInitInputWeightsName(zeDescriptorName)) {
+        zeDescriptorName = zeDescriptorName.substr(INIT_INPUT_WEIGHTS_PREFIX.length());
+    } else if (isInitOutputWeightsName(zeDescriptorName)) {
+        zeDescriptorName = zeDescriptorName.substr(INIT_OUTPUT_WEIGHTS_PREFIX.length());
+    } else if (isMainInputWeightsName(zeDescriptorName)) {
+        zeDescriptorName = zeDescriptorName.substr(MAIN_INPUT_WEIGHTS_PREFIX.length());
     }
 
     OPENVINO_ASSERT(ioDescriptor.nameFromCompiler == zeDescriptorName,
@@ -470,6 +476,27 @@ ov::SoPtr<ov::ITensor> ZeroInferRequest::get_tensor(const ov::Output<const ov::N
     return levelZeroTensors;
 }
 
+void ZeroInferRequest::set_weights_inputs(
+    const std::unordered_map<std::string, std::shared_ptr<ov::ITensor>>& weightsInputs) {
+    for (const auto& [weightName, weightTensor] : weightsInputs) {
+        size_t inputIndex;
+        for (inputIndex = 0; inputIndex < _metadata.inputs.size(); ++inputIndex) {
+            const IODescriptor inputDescriptor = _metadata.inputs.at(inputIndex);
+            if (inputDescriptor.isMainInputWeights && inputDescriptor.nameFromCompiler == weightName) {
+                break;
+            }
+        }
+
+        OPENVINO_ASSERT(inputIndex != _metadata.inputs.size(),
+                        "Did not find an input bearing the ",
+                        weightName,
+                        " weights name");
+
+        _userInputTensors.at(inputIndex) = {weightTensor};
+        set_tensor_data(weightTensor, inputIndex, INPUT);
+    }
+}
+
 void ZeroInferRequest::infer() {
     if (_config.get<RUN_INFERENCES_SEQUENTIALLY>()) {
         OPENVINO_THROW("Only start async is supported when RUN_INFERENCES_SEQUENTIALLY is enabled!");
@@ -497,6 +524,12 @@ void ZeroInferRequest::infer_async() {
     size_t inputIndex = 0;
     for (const auto& userTensor : _userInputTensors) {
         const IODescriptor inputDescriptor = _metadata.inputs.at(inputIndex);
+
+        if (!_config.get<BENCHMARK_INIT>()) {
+            OPENVINO_ASSERT(!inputDescriptor.isInitInputWeights,
+                            "This path should not be used for running inferences for the \"init\" model");
+        }
+
         if (inputDescriptor.isShapeTensor) {
             OPENVINO_ASSERT(inputDescriptor.relatedDescriptorIndex.has_value(),
                             "The link between the dynamic tensor and its shape tensor is missing, entry name: ",
@@ -555,6 +588,11 @@ void ZeroInferRequest::infer_async() {
             }
 
             ++inputIndex;
+            continue;
+        }
+
+        if (inputDescriptor.isMainInputWeights) {
+            // These values were set while constructing the "CompiledModel" object
             continue;
         }
 

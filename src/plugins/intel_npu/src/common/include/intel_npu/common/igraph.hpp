@@ -25,6 +25,12 @@ public:
 
     virtual void export_blob(std::ostream& stream) const = 0;
 
+    virtual void custom_export(std::ostream& stream,
+                               const std::shared_ptr<IGraph> initGraph,
+                               const std::shared_ptr<ov::Model> initModel) const {
+        OPENVINO_NOT_IMPLEMENTED;
+    }
+
     virtual std::vector<ov::ProfilingInfo> process_profiling_output(const std::vector<uint8_t>& profData,
                                                                     const Config& config) const = 0;
 
@@ -55,6 +61,8 @@ public:
     const uint32_t get_last_submitted_id() const;
 
     const std::optional<std::size_t> get_batch_size() const;
+
+    std::vector<uint8_t> _blob;
 
 protected:
     /**
