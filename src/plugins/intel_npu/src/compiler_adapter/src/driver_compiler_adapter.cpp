@@ -6,6 +6,7 @@
 
 #include <ze_graph_ext.h>
 
+#include <fstream>
 #include <regex>
 #include <string_view>
 
@@ -137,6 +138,51 @@ std::string rankToLegacyLayoutString(const size_t rank) {
     }
 }
 
+/**
+ * @brief Just for the PoC purpose
+ *
+ * @param stream
+ * @return size_t
+ */
+size_t getFileSize(std::istream& stream) {
+    if (!stream) {
+        OPENVINO_THROW("Stream is in bad status! Please check the passed stream status!");
+    }
+
+    const size_t streamStart = stream.tellg();
+    stream.seekg(0, std::ios_base::end);
+    const size_t streamEnd = stream.tellg();
+    stream.seekg(streamStart, std::ios_base::beg);
+
+    if (streamEnd < streamStart) {
+        OPENVINO_THROW("Invalid stream size: streamEnd (",
+                       streamEnd,
+                       ") is not larger than streamStart (",
+                       streamStart,
+                       ")!");
+    }
+
+    return streamEnd - streamStart;
+}
+
+std::vector<uint8_t> readCompiledModel(std::string_view path) {
+    std::ifstream inputStream(path.data());
+    if (!inputStream) {
+        OPENVINO_THROW("Could not open the file");
+    }
+
+    auto graphSize = getFileSize(inputStream);
+
+    std::vector<uint8_t> blob(graphSize);
+    inputStream.read(reinterpret_cast<char*>(blob.data()), graphSize);
+    if (!inputStream) {
+        OPENVINO_THROW("Failed to read data from stream!");
+    }
+    inputStream.close();
+
+    return blob;
+}
+
 }  // namespace
 
 namespace intel_npu {
@@ -204,6 +250,65 @@ std::shared_ptr<IGraph> DriverCompilerAdapter::compile(const std::shared_ptr<con
                                          std::move(networkMeta),
                                          config,
                                          std::nullopt);
+}
+
+std::vector<std::shared_ptr<IGraph>> DriverCompilerAdapter::compileWS(const std::shared_ptr<ov::Model>& model,
+                                                                      const Config& config) const {
+    OV_ITT_TASK_CHAIN(COMPILE_BLOB, itt::domains::NPUPlugin, "DriverCompilerAdapter", "compileWS");
+
+    const ze_graph_compiler_version_info_t& compilerVersion = _deviceGraphProperties.compilerVersion;
+    const auto maxOpsetVersion = _deviceGraphProperties.maxOVOpsetVersionSupported;
+    _logger.info("getSupportedOpsetVersion Max supported version of opset in CiD: %d", maxOpsetVersion);
+
+    if (config.get<SEPARATE_WEIGHTS_VERSION>() != 2) {
+        OPENVINO_THROW("Invalid \"SEPARATE_WEIGHTS_VERSION\" value found within the \"compileWS\" call");
+    }
+
+    _logger.debug("serialize IR");
+    auto serializedIR = serializeIR(model, compilerVersion, maxOpsetVersion);
+
+    std::string buildFlags;
+    const bool useIndices = !((compilerVersion.major < 5) || (compilerVersion.major == 5 && compilerVersion.minor < 9));
+
+    _logger.debug("build flags");
+    buildFlags += serializeIOInfo(model, useIndices);
+    buildFlags += " ";
+    buildFlags += serializeConfig(config, compilerVersion);
+
+    _logger.debug("compileIR Build flags : %s", buildFlags.c_str());
+
+    // If UMD Caching is requested to be bypassed or if OV cache is enabled, disable driver caching
+    uint32_t flags = ZE_GRAPH_FLAG_NONE;
+    const auto set_cache_dir = config.get<CACHE_DIR>();
+    if (!set_cache_dir.empty() || config.get<BYPASS_UMD_CACHING>()) {
+        flags = flags | ZE_GRAPH_FLAG_DISABLE_CACHING;
+    }
+
+    _logger.debug("compile start");
+    ze_graph_handle_t initGraphHandle = _zeGraphExt->getGraphHandle(std::move(serializedIR), buildFlags, flags);
+    ze_graph_handle_t mainGraphHandle = _zeGraphExt->getGraphHandle(std::move(serializedIR), buildFlags, flags);
+    _logger.debug("compile end");
+
+    OV_ITT_TASK_NEXT(COMPILE_BLOB, "getNetworkMeta");
+    NetworkMetadata initNetworkMetadata = _zeGraphExt->getNetworkMeta(initGraphHandle);
+    NetworkMetadata mainNetworkMetadata = _zeGraphExt->getNetworkMeta(mainGraphHandle);
+    initNetworkMetadata.name = model->get_friendly_name() + "_init";
+    mainNetworkMetadata.name = model->get_friendly_name() + "_main";
+
+    auto initGraph = std::make_shared<DriverGraph>(_zeGraphExt,
+                                                   _zeroInitStruct,
+                                                   initGraphHandle,
+                                                   std::move(initNetworkMetadata),
+                                                   config,
+                                                   std::nullopt);
+    auto mainGraph = std::make_shared<DriverGraph>(_zeGraphExt,
+                                                   _zeroInitStruct,
+                                                   mainGraphHandle,
+                                                   std::move(mainNetworkMetadata),
+                                                   config,
+                                                   std::nullopt);
+
+    return {initGraph, mainGraph};
 }
 
 std::shared_ptr<IGraph> DriverCompilerAdapter::parse(std::vector<uint8_t> network, const Config& config) const {
@@ -551,6 +656,13 @@ std::string DriverCompilerAdapter::serializeConfig(const Config& config,
         content = std::regex_replace(content, std::regex(batchstr.str()), "");
     }
 
+    if ((compilerVersion.major < 6) || (compilerVersion.major == 6 && compilerVersion.minor < 3)) {
+        std::ostringstream separateWeightsStream;
+        separateWeightsStream << ov::intel_npu::separate_weights_version.name() << KEY_VALUE_SEPARATOR
+                              << VALUE_DELIMITER << "\\S+" << VALUE_DELIMITER;
+        content = std::regex_replace(content, std::regex(separateWeightsStream.str()), "");
+    }
+
     // Remove the properties that are not used by the compiler WorkloadType is used only by compiled model
     std::ostringstream workloadtypestr;
     workloadtypestr << ov::workload_type.name() << KEY_VALUE_SEPARATOR << VALUE_DELIMITER << "\\S+" << VALUE_DELIMITER;
@@ -564,6 +676,11 @@ std::string DriverCompilerAdapter::serializeConfig(const Config& config,
     umdcachestring << ov::intel_npu::bypass_umd_caching.name() << KEY_VALUE_SEPARATOR << VALUE_DELIMITER << "\\S+"
                    << VALUE_DELIMITER;
     content = std::regex_replace(content, std::regex(umdcachestring.str()), "");
+
+    std::ostringstream benchmarkInitStream;
+    benchmarkInitStream << ov::intel_npu::benchmark_init.name() << KEY_VALUE_SEPARATOR << VALUE_DELIMITER << "\\S+"
+                        << VALUE_DELIMITER;
+    content = std::regex_replace(content, std::regex(benchmarkInitStream.str()), "");
 
     // FINAL step to convert prefixes of remaining params, to ensure backwards compatibility
     // From 5.0.0, driver compiler start to use NPU_ prefix, the old version uses VPU_ prefix
