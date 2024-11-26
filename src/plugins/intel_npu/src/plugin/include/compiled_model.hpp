@@ -79,6 +79,7 @@ private:
 
     std::unique_ptr<Properties> _properties;
 
+    // mutable bool exportInitFlag = false;
     std::shared_ptr<IGraph> _graph;
     std::vector<std::shared_ptr<IGraph>> _initGraphs;
     std::shared_ptr<ov::Model> _initModel;
