@@ -196,8 +196,8 @@ std::pair<std::unordered_map<std::string, std::shared_ptr<ov::ITensor>>, ov::SoP
                                                      nullptr,
                                                      inputTensorsData,
                                                      outputTensorsData,
-                                                     /*numberOfCommandLists*/ 1,
                                                      groupOrdinal);
+
     begin = std::chrono::steady_clock::now();
     pipeline->push();
     pipeline->pull();

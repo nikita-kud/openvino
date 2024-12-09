@@ -97,8 +97,6 @@ protected:
     // first inference starts running
     std::mutex _mutex;
 
-    std::vector<uint8_t> _blob;
-
     uint32_t _unique_id = 0;
     uint32_t _last_submitted_id;
 
