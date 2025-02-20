@@ -79,6 +79,8 @@
 #include "ir_serializer.hpp"
 #include "openvino/core/model.hpp"
 
+#include "mem_usage.hpp"
+
 namespace {
 
 constexpr std::string_view INPUTS_PRECISIONS_KEY = "--inputs_precisions";
@@ -444,6 +446,7 @@ std::vector<std::shared_ptr<IGraph>> DriverCompilerAdapter::compileWS(const std:
     size_t callNumber = 0;
     bool compilationDone = false;
 
+    auto compile_model_mem_start = get_peak_memory_usage();
     while (!compilationDone) {
         _logger.debug("compileWS iteration %d", callNumber);
 
@@ -488,6 +491,12 @@ std::vector<std::shared_ptr<IGraph>> DriverCompilerAdapter::compileWS(const std:
             serializedIR = SerializedIR();
         }
     }
+    auto compile_model_mem_end = get_peak_memory_usage();
+
+    std::cout << "Start of compilation memory usage: Peak " << compile_model_mem_start << " KB" << std::endl;
+    std::cout << "End of compilation memory usage: Peak " << compile_model_mem_end << " KB" << std::endl;
+    std::cout << "Compilation memory usage: Peak " << compile_model_mem_end - compile_model_mem_start << " KB"
+               << std::endl;
 
     std::vector<std::shared_ptr<IGraph>> driverGraphs;
     for (size_t handleIndex = 0; handleIndex < initGraphHandles.size(); ++handleIndex) {
