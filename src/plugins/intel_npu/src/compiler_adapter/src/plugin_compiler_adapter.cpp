@@ -128,6 +128,8 @@ std::vector<std::shared_ptr<IGraph>> PluginCompilerAdapter::compileWS(const std:
         return starts_with(name, "main");
     };
 
+    std::cout << "SEPARATE_WEIGHTS_VERSION: " << config.get<SEPARATE_WEIGHTS_VERSION>() << std::endl;
+
     switch (config.get<SEPARATE_WEIGHTS_VERSION>()) {
     case 1: {
         const std::vector<std::shared_ptr<NetworkDescription>> initMainNetworkDescriptions =
