@@ -82,6 +82,8 @@ void PluginGraph::custom_export(std::ostream& stream,
 void PluginGraph::custom_export_split_init(std::ostream& stream,
                                            const std::vector<std::shared_ptr<IGraph>>& initGraphs,
                                            const std::shared_ptr<ov::Model>& initModel) const {
+    std::cout << "custom_export_split_init\n";
+
     std::stringstream xmlContent;
     std::stringstream binContent;
 

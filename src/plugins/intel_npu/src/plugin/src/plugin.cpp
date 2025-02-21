@@ -199,6 +199,7 @@ struct ImportDataWs {
 };
 
 ImportDataWs readBlobsWs_v1(std::istream& stream) {
+    std::cout << "readBlobsWs_v1\n";
     ImportDataWs data;
 
     uint32_t blobSize;
@@ -227,6 +228,7 @@ ImportDataWs readBlobsWs_v1(std::istream& stream) {
 }
 
 ImportDataWs readBlobsWs_general(std::istream& stream) {
+    std::cout << "readBlobsWs_general\n";
     ImportDataWs data;
 
     uint32_t blobSize;
@@ -731,6 +733,7 @@ std::shared_ptr<ov::ICompiledModel> Plugin::import_model(std::istream& stream, c
         uint64_t graphSize;
         const bool skipCompatibility = localConfig.get<DISABLE_VERSION_CHECK>();
         if (localConfig.get<SEPARATE_WEIGHTS_VERSION>() == 0) {
+            std::cout << "SEPARATE_WEIGHTS_VERSION == 0\n";
             if (!skipCompatibility) {
                 auto storedMeta = read_metadata_from(stream);
                 if (!storedMeta->is_compatible()) {
@@ -766,6 +769,7 @@ std::shared_ptr<ov::ICompiledModel> Plugin::import_model(std::istream& stream, c
 
             compiledModel = std::make_shared<CompiledModel>(modelDummy, shared_from_this(), device, graph, localConfig);
         } else {
+            std::cout << "SEPARATE_WEIGHTS_VERSION != 0\n";
             uint32_t xmlSize;
             uint32_t binSize;
             std::string xml;
