@@ -114,7 +114,9 @@ void DriverGraph::custom_export(std::ostream& stream,
     } else {
         if (_logger.level() >= ov::log::Level::INFO) {
             std::stringstream str;
-            str << "Blob size: " << mainBlobSize + initBlobSize + 4 * sizeof(uint32_t) + xmlSize + binSize << std::endl;
+            str << "Blob size: " << mainBlobSize + initBlobSize << std::endl;
+            str << "Blob size with weights: "
+                << _blob.size() + initBlob.size() + 4 * sizeof(uint32_t) + xmlSize + binSize << std::endl;
             _logger.info(str.str().c_str());
         }
         _logger.info("Write blob to stream successfully.");
