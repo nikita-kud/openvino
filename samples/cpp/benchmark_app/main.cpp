@@ -37,6 +37,7 @@
 #include "utils.hpp"
 // clang-format on
 
+// dummy comment
 namespace {
 bool parse_and_check_command_line(int argc, char* argv[]) {
     // ---------------------------Parsing and validating input
