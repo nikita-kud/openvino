@@ -803,17 +803,17 @@ std::string DriverCompilerAdapter::serializeConfig(const Config& config,
                                      getStringReplacement(ov::intel_npu::LegacyPriority::HIGH));
     }
 
-    if ((compilerVersion.major < 7) || (compilerVersion.major == 7 && compilerVersion.minor < 3)) {
-        std::ostringstream separateWeightsStream;
-        separateWeightsStream << ov::intel_npu::separate_weights_version.name() << KEY_VALUE_SEPARATOR
-                              << VALUE_DELIMITER << "\\S+" << VALUE_DELIMITER;
-        content = std::regex_replace(content, std::regex(separateWeightsStream.str()), "");
+    // if ((compilerVersion.major < 7) || (compilerVersion.major == 7 && compilerVersion.minor < 3)) {
+    //     std::ostringstream separateWeightsStream;
+    //     separateWeightsStream << ov::intel_npu::separate_weights_version.name() << KEY_VALUE_SEPARATOR
+    //                           << VALUE_DELIMITER << "\\S+" << VALUE_DELIMITER;
+    //     content = std::regex_replace(content, std::regex(separateWeightsStream.str()), "");
 
-        std::ostringstream wsCompileCallNumberStream;
-        wsCompileCallNumberStream << ov::intel_npu::ws_compile_call_number.name() << KEY_VALUE_SEPARATOR
-                                  << VALUE_DELIMITER << "\\S+" << VALUE_DELIMITER;
-        content = std::regex_replace(content, std::regex(wsCompileCallNumberStream.str()), "");
-    }
+    //     std::ostringstream wsCompileCallNumberStream;
+    //     wsCompileCallNumberStream << ov::intel_npu::ws_compile_call_number.name() << KEY_VALUE_SEPARATOR
+    //                               << VALUE_DELIMITER << "\\S+" << VALUE_DELIMITER;
+    //     content = std::regex_replace(content, std::regex(wsCompileCallNumberStream.str()), "");
+    // }
 
     std::ostringstream benchmarkInitStream;
     benchmarkInitStream << ov::intel_npu::benchmark_init.name() << KEY_VALUE_SEPARATOR << VALUE_DELIMITER << "\\S+"
