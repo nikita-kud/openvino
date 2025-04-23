@@ -304,6 +304,10 @@ void Properties::registerProperties() {
     TRY_REGISTER_SIMPLE_PROPERTY(ov::intel_npu::batch_compiler_mode_settings, BATCH_COMPILER_MODE_SETTINGS);
     TRY_REGISTER_SIMPLE_PROPERTY(ov::hint::enable_cpu_pinning, ENABLE_CPU_PINNING);
 
+    TRY_REGISTER_SIMPLE_PROPERTY(ov::intel_npu::separate_weights_version, SEPARATE_WEIGHTS_VERSION);
+    TRY_REGISTER_SIMPLE_PROPERTY(ov::intel_npu::benchmark_init, BENCHMARK_INIT);
+    TRY_REGISTER_SIMPLE_PROPERTY(ov::intel_npu::ws_compile_call_number, WS_COMPILE_CALL_NUMBER);
+
     // 1.2. Special cases
     // ==================
     if (_pType == PropertiesType::PLUGIN && _metrics != nullptr) {
