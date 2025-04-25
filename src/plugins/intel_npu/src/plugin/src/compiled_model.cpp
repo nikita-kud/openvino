@@ -4,6 +4,7 @@
 
 #include "compiled_model.hpp"
 
+#include <chrono>
 #include <fstream>
 #include <string_view>
 
@@ -13,7 +14,6 @@
 #include "intel_npu/config/options.hpp"
 #include "metadata.hpp"
 #include "openvino/pass/constant_folding.hpp"
-#include "openvino/pass/manager.hpp"
 #include "openvino/runtime/properties.hpp"
 #include "openvino/runtime/system_conf.hpp"
 #include "openvino/runtime/threading/executor_manager.hpp"
@@ -29,16 +29,23 @@ namespace intel_npu {
 
 using intel_npu::envVarStrToBool;
 
+std::chrono::steady_clock::time_point begin;
+std::chrono::steady_clock::time_point end;
+
 CompiledModel::CompiledModel(const std::shared_ptr<const ov::Model>& model,
                              const std::shared_ptr<const ov::IPlugin>& plugin,
                              const std::shared_ptr<IDevice>& device,
                              const std::shared_ptr<IGraph>& graph,
-                             const FilteredConfig& config)
+                             const FilteredConfig& config,
+                             const std::shared_ptr<IGraph>& initGraph,
+                             const std::shared_ptr<ov::Model>& initModel)
     : ICompiledModel(model, plugin),
       _config(config),
       _logger("CompiledModel", config.get<LOG_LEVEL>()),
       _device(device),
-      _graph(graph) {
+      _graph(graph),
+      _initGraph(initGraph),
+      _initModel(initModel) {
     OV_ITT_SCOPED_TASK(itt::domains::NPUPlugin, "CompiledModel::CompiledModel");
 
     OV_ITT_TASK_CHAIN(COMPILED_MODEL, itt::domains::NPUPlugin, "CompiledModel::CompiledModel", "initialize_properties");
@@ -46,6 +53,18 @@ CompiledModel::CompiledModel(const std::shared_ptr<const ov::Model>& model,
     _properties->registerProperties();
 
     configure_stream_executors();
+
+    if (_initGraph != nullptr) {
+        if (_config.get<CREATE_EXECUTOR>() && !_config.get<DEFER_WEIGHTS_LOAD>()) {
+            begin = std::chrono::steady_clock::now();
+            std::tie(_weightsInputs, _initOutputsTensor) =
+                _device->runInit(_initGraph, _initModel, get_context(), _config);
+            end = std::chrono::steady_clock::now();
+            std::cout << "run_init() call within the \"CompiledModel\" ctor "
+                      << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]"
+                      << std::endl;
+        }
+    }
 
     OV_ITT_TASK_SKIP(COMPILED_MODEL);
 }
@@ -74,6 +93,33 @@ std::shared_ptr<ov::IAsyncInferRequest> CompiledModel::create_infer_request() co
         _device->createInferRequest(shared_from_this(), _config);
     syncInferRequest->initialize_states();
 
+    if (_initGraph != nullptr) {
+        if (!_config.get<CREATE_EXECUTOR>() || _config.get<DEFER_WEIGHTS_LOAD>()) {
+            begin = std::chrono::steady_clock::now();
+            _initGraph->initialize(_config);
+            end = std::chrono::steady_clock::now();
+            std::cout << "Init graph->initialize() "
+                      << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]"
+                      << std::endl;
+
+            begin = std::chrono::steady_clock::now();
+            std::tie(_weightsInputs, _initOutputsTensor) =
+                _device->runInit(_initGraph, _initModel, get_context(), _config);
+            end = std::chrono::steady_clock::now();
+            std::cout << "run_init() call during inference request creation "
+                      << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]"
+                      << std::endl;
+        }
+
+        OPENVINO_ASSERT(_device != nullptr);
+
+        begin = std::chrono::steady_clock::now();
+        syncInferRequest->set_weights_inputs(_weightsInputs);
+        end = std::chrono::steady_clock::now();
+        std::cout << "set_weights_inputs() call "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]" << std::endl;
+    }
+
     return std::make_shared<AsyncInferRequest>(syncInferRequest,
                                                get_task_executor(),
                                                _resultExecutor,
@@ -88,9 +134,14 @@ std::shared_ptr<ov::ISyncInferRequest> CompiledModel::create_sync_infer_request(
 
 void CompiledModel::export_model(std::ostream& stream) const {
     _logger.debug("CompiledModel::export_model");
-    size_t blobSizeBeforeVersioning = _graph->export_blob(stream);
 
-    auto meta = Metadata<CURRENT_METADATA_VERSION>(blobSizeBeforeVersioning, CURRENT_OPENVINO_VERSION);
+    size_t mainBlobSizeBeforeVersioning = _graph->export_blob(stream);
+    size_t initBlobSizeBeforeVersioning = _initGraph ? _initGraph->export_blob(stream) : 0;
+    const std::vector<uint64_t> initBlobSizes =
+        _initGraph ? std::vector<uint64_t>{initBlobSizeBeforeVersioning} : std::vector<uint64_t>{};
+    auto meta = Metadata<CURRENT_METADATA_VERSION>(initBlobSizeBeforeVersioning + mainBlobSizeBeforeVersioning,
+                                                   CURRENT_OPENVINO_VERSION,
+                                                   initBlobSizes);
     meta.write(stream);
 }
 
