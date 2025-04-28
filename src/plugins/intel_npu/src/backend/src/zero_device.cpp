@@ -192,10 +192,6 @@ std::pair<std::unordered_map<std::string, std::shared_ptr<ov::ITensor>>, ov::SoP
               << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[microseconds]"
               << std::endl;
 
-    auto progilingPool = zeroProfiling::ProfilingPool(_initStructs, initGraph, zeroProfiling::POOL_SIZE);
-    auto profilingQuery = zeroProfiling::ProfilingQuery(_initStructs, 0);
-    auto npuProfiling = std::make_shared<zeroProfiling::NpuInferProfiling>(_initStructs, config.get<LOG_LEVEL>());
-
     ze_device_properties_t properties = {};
     properties.stype = ZE_STRUCTURE_TYPE_DEVICE_PROPERTIES;
     THROW_ON_FAIL_FOR_LEVELZERO("zeDeviceGetProperties", zeDeviceGetProperties(_initStructs->getDevice(), &properties));
@@ -203,9 +199,6 @@ std::pair<std::unordered_map<std::string, std::shared_ptr<ov::ITensor>>, ov::SoP
     const auto pipeline = std::make_unique<Pipeline>(config,
                                                      _initStructs,
                                                      initGraph,
-                                                     progilingPool,
-                                                     profilingQuery,
-                                                     npuProfiling,
                                                      inputTensors,
                                                      outputTensors);
     begin = std::chrono::steady_clock::now();

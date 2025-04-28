@@ -840,7 +840,7 @@ std::shared_ptr<ov::ICompiledModel> Plugin::import_model(std::istream& stream, c
 
     try {
         CompilerAdapterFactory compilerAdapterFactory;
-        auto compiler = compilerAdapterFactory.getCompiler(_backend, localConfig);
+        auto compiler = compilerAdapterFactory.getCompiler(_backend, resolveCompilerType(_globalConfig, properties));
 
         uint64_t mainSize;
         std::vector<uint64_t> initSizes;
