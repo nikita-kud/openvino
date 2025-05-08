@@ -357,16 +357,15 @@ void Plugin::init_options() {
             REGISTER_OPTION(TURBO);
             REGISTER_OPTION(WORKLOAD_TYPE);
         }
-    }
-
-    filter_config_by_compiler_support(_globalConfig);
-
-    if (_backend) {
+        // register backend options
         _backend->registerOptions(*_options);
     }
 
     // parse again env_variables to update registered configs which have env vars set
     _globalConfig.parseEnvVars();
+
+    // filter out unsupported options
+    filter_config_by_compiler_support(_globalConfig);
 }
 
 void Plugin::filter_config_by_compiler_support(FilteredConfig& cfg) const {
