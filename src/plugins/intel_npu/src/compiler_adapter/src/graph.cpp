@@ -66,7 +66,7 @@ size_t Graph::export_blob(std::ostream& stream) const {
         }
 
         std::stringstream str;
-        str << "Blob size: " << blobSize << ", hash: " << std::hex << result;
+        str << "Part of blob size: " << blobSize << ", hash: " << std::hex << result;
         _logger.info(str.str().c_str());
     }
     _logger.info("Write blob to stream successfully.");
