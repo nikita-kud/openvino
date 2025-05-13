@@ -163,16 +163,23 @@ void CompiledModel::export_model(std::ostream& stream) const {
     size_t mainBlobSizeBeforeVersioning = _graph->export_blob(stream);
     size_t totalInitBlobSizesBeforeVersioning = 0;
     std::vector<uint64_t> initBlobSizes;
+    size_t totalBlobSize = mainBlobSizeBeforeVersioning;
 
     for (const std::shared_ptr<IGraph>& initGraph : _initGraphs) {
         const uint64_t initBlobSize = initGraph->export_blob(stream);
         totalInitBlobSizesBeforeVersioning += initBlobSize;
+        totalBlobSize += initBlobSize;
         initBlobSizes.push_back(initBlobSize);
     }
 
     auto meta = Metadata<CURRENT_METADATA_VERSION>(totalInitBlobSizesBeforeVersioning + mainBlobSizeBeforeVersioning,
                                                    CURRENT_OPENVINO_VERSION,
                                                    initBlobSizes);
+
+    std::stringstream str;
+    str << "Blob size: " << totalBlobSize << ", hash: " << 0;
+    _logger.info(str.str().c_str());
+
     meta.write(stream);
 }
 
