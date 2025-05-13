@@ -46,7 +46,7 @@ size_t PluginGraph::export_blob(std::ostream& stream) const {
         }
 
         std::stringstream str;
-        str << "Blob size: " << _blobPtr->size() << ", hash: " << std::hex << result;
+        str << "Part of blob size: " << _blobPtr->size() << ", hash: " << std::hex << result;
         _logger.info(str.str().c_str());
     }
     _logger.info("Write blob to stream successfully.");
