@@ -1397,7 +1397,7 @@ struct WEIGHTLESS_BLOB final : OptionBase<WEIGHTLESS_BLOB, bool> {
     }
 
     static OptionMode mode() {
-        return OptionMode::CompileTime;
+        return OptionMode::RunTime;
     }
 };
 
