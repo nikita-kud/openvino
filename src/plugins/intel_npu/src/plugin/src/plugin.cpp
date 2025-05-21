@@ -770,6 +770,7 @@ std::shared_ptr<ov::ICompiledModel> Plugin::import_model(std::istream& stream, c
             compiledModel = std::make_shared<CompiledModel>(modelDummy, shared_from_this(), device, graph, localConfig);
         } else {
             std::cout << "SEPARATE_WEIGHTS_VERSION != 0\n";
+            std::cout << "SEPARATE_WEIGHTS_VERSION: " << localConfig.get<SEPARATE_WEIGHTS_VERSION>() << "\n";
             uint32_t xmlSize;
             uint32_t binSize;
             std::string xml;
@@ -784,8 +785,8 @@ std::shared_ptr<ov::ICompiledModel> Plugin::import_model(std::istream& stream, c
 
             const std::shared_ptr<ov::Model> initModel = get_core()->read_model(xml, weightsTensor);
 
-            auto wsData = (localConfig.get<SEPARATE_WEIGHTS_VERSION>() == 1) ? readBlobsWs_v1(stream)
-                                                                             : readBlobsWs_general(stream);
+
+            auto wsData = readBlobsWs_v1(stream);
 
             std::vector<std::shared_ptr<IGraph>> initGraphs;
             initGraphs.reserve(wsData.initBlobs.size());
