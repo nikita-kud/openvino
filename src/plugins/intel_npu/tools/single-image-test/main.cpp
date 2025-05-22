@@ -29,6 +29,9 @@
 #include <string>
 #include <vector>
 
+constexpr std::string_view WEIGHTS_EXTENSION = ".bin";
+constexpr std::string_view BLOB_EXTENSION = ".blob";
+
 using TensorMap = std::map<std::string, ov::Tensor>;
 
 struct TensorDescriptor {
@@ -2194,7 +2197,16 @@ static int runSingleImageTest() {
 
             std::ifstream file(FLAGS_network, std::ios_base::in | std::ios_base::binary);
             OPENVINO_ASSERT(file.is_open(), "Can't open file ", FLAGS_network, " for read");
-            compiledModel = core.import_model(file, FLAGS_device);
+
+            // Temporary solution: build the path to the weights by leveragin the one towards the binary object
+            ov::AnyMap device_config;
+            std::string weightsPath = FLAGS_network;
+            weightsPath.replace(weightsPath.size() - BLOB_EXTENSION.length(),
+                                BLOB_EXTENSION.length(),
+                                WEIGHTS_EXTENSION);
+            device_config.insert(ov::weights_path(weightsPath));
+
+            compiledModel = core.import_model(file, FLAGS_device, device_config);
         }
 
         // store compiled model, if required
