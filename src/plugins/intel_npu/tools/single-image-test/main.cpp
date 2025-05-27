@@ -2212,17 +2212,21 @@ static int runSingleImageTest() {
                                 WEIGHTS_EXTENSION);
 
             if (!file_exists(weightsPath)) {
+                std::cout << "Failed to find weightsPath: " << weightsPath
+                              << std::endl;
                 weightsPath.replace(weightsPath.size() - WEIGHTS_EXTENSION.length(),
                                     WEIGHTS_EXTENSION.length(),
                                     ONNX_EXTENSION);
                 if (!file_exists(weightsPath)) {
+                    std::cout << "Failed to find weightsPath again: " << weightsPath
+                              << std::endl;
                     std::cout << "No weights file could be found by using the path towards the compiled model"
                               << std::endl;
                 }
             }
             device_config.insert(ov::weights_path(weightsPath));
 
-            compiledModel = core.import_model(file, FLAGS_device);
+            compiledModel = core.import_model(file, FLAGS_device, device_config);
         }
 
         // store compiled model, if required
