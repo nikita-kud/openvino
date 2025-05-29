@@ -78,7 +78,7 @@ public:
 
 private:
     InputData allocateInputs(const std::shared_ptr<IGraph>& initGraph,
-                             const std::vector<std::shared_ptr<ov::op::v0::Constant>>& constants,
+                             const std::unordered_map<size_t, std::shared_ptr<ov::op::v0::Constant>>& constants,
                              const ov::SoPtr<ov::IRemoteContext>& context,
                              const Config& config);
 

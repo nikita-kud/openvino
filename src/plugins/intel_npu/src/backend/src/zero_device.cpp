@@ -18,25 +18,57 @@
 #include "openvino/op/constant.hpp"
 #include "openvino/runtime/make_tensor.hpp"
 #include "zero_infer_request.hpp"
+#include <openvino/core/rt_info/weightless_caching_attributes.hpp>
 
 using namespace intel_npu;
 
 namespace {
-std::vector<std::shared_ptr<ov::op::v0::Constant>> getAllConstantsInTopologicalOrder(
+std::unordered_map<size_t, std::shared_ptr<ov::op::v0::Constant>> getAllConstantsInTopologicalOrder(
     const std::shared_ptr<const ov::Model>& model) {
     std::chrono::steady_clock::time_point begin;
     std::chrono::steady_clock::time_point end;
 
-    std::vector<std::shared_ptr<ov::op::v0::Constant>> constants;
+    std::unordered_map<size_t, std::shared_ptr<ov::op::v0::Constant>> constants;
 
     // Match the inputs of the "init" model with the Constant nodes of the original model
     begin = std::chrono::steady_clock::now();
-    for (auto&& node : model->get_ordered_ops()) {
-        if (!ov::is_type<ov::op::v0::Constant>(node)) {
+    bool isWeightlessCacheAttributeFound = false;
+    for (auto&& ov_node : model->get_ordered_ops()) {
+        if (!ov::is_type<ov::op::v0::Constant>(ov_node)) {
             continue;
         }
-        auto constantNode = std::static_pointer_cast<ov::op::v0::Constant>(node);
-        constants.push_back(constantNode);
+
+        if (auto it = ov_node->get_rt_info().find(ov::WeightlessCacheAttribute::get_type_info_static());
+            it != ov_node->get_rt_info().end()) {
+            isWeightlessCacheAttributeFound = true;
+        }
+    }
+
+    if(isWeightlessCacheAttributeFound) {        
+        std::cout << "Weightless cache attribute found in the model." << std::endl;
+        for (auto&& node : model->get_ordered_ops()) {
+            if (!ov::is_type<ov::op::v0::Constant>(node)) {
+                continue;
+            }
+
+            auto constantNode = std::static_pointer_cast<ov::op::v0::Constant>(node);
+            ov::RTMap& runtimeInfoMap = constantNode->get_rt_info();
+            const auto& weightlessCacheAttrIt = runtimeInfoMap.find(ov::WeightlessCacheAttribute::get_type_info_static());
+            if (weightlessCacheAttrIt != runtimeInfoMap.end()) {
+                auto& weightlessCacheAttr = weightlessCacheAttrIt->second.as<ov::WeightlessCacheAttribute>();
+                constants[weightlessCacheAttr.bin_offset] = constantNode;
+            }
+        }
+    } else {
+        size_t constantId = 0;
+        for (auto&& node : model->get_ordered_ops()) {
+            if (!ov::is_type<ov::op::v0::Constant>(node)) {
+                continue;
+            }
+            auto constantNode = std::static_pointer_cast<ov::op::v0::Constant>(node);
+            constants[constantId] = constantNode;
+            constantId++;
+        }
     }
     end = std::chrono::steady_clock::now();
     std::cout << "getting constant IDs " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()
@@ -59,7 +91,7 @@ struct QueueData {
 // task 2
 template <typename Task1Callable, typename Task2Callable>
 class Parallelizer {
-    std::vector<std::shared_ptr<ov::op::v0::Constant>> _modelConstants;
+    std::unordered_map<size_t, std::shared_ptr<ov::op::v0::Constant>> _modelConstants;
 
     std::mutex _mutex;
     std::queue<QueueData> _payloads;
@@ -245,7 +277,7 @@ ZeroDevice::runInitMultiThreaded(const std::vector<std::shared_ptr<IGraph>>& ini
     //                                    allocate I/O -> create Pipeline -> run Pipeline
     Parallelizer multiThreadedRunner(
         model,
-        [&](const std::vector<std::shared_ptr<ov::op::v0::Constant>>& constants, int64_t graphIndex) -> QueueData {
+        [&](const std::unordered_map<size_t, std::shared_ptr<ov::op::v0::Constant>>& constants, int64_t graphIndex) -> QueueData {
             const auto& initGraph = initGraphs[graphIndex];
 
             QueueData data{};
@@ -409,7 +441,7 @@ std::shared_ptr<SyncInferRequest> ZeroDevice::createInferRequest(
 }
 
 ZeroDevice::InputData ZeroDevice::allocateInputs(const std::shared_ptr<IGraph>& initGraph,
-                                                 const std::vector<std::shared_ptr<ov::op::v0::Constant>>& constants,
+                                                 const std::unordered_map<size_t, std::shared_ptr<ov::op::v0::Constant>>& constants,
                                                  const ov::SoPtr<ov::IRemoteContext>& context,
                                                  const Config& config) {
     std::vector<std::vector<std::shared_ptr<ov::ITensor>>> inputTensors;
@@ -450,8 +482,12 @@ ZeroDevice::InputData ZeroDevice::allocateInputs(const std::shared_ptr<IGraph>& 
         const size_t currentInputSize =
             ov::element::get_memory_size(descriptor.precision, shape_size(descriptor.shapeFromCompiler.to_shape()));
 
-        OPENVINO_ASSERT(id < constants.size(), "Mismatch between weights IDs and parsed inputs");
-        const auto& constant = constants[id];
+        OPENVINO_ASSERT(constants.count(id) > 0,
+                        "Weights ID ",
+                        id,
+                        " not found in the model constants. This may indicate a mismatch between the model and the "
+                        "compiled graph metadata.");
+        const auto& constant = constants.at(id);
         OPENVINO_ASSERT(constant->get_byte_size() == currentInputSize,
                         "Byte size mismatch for ",
                         descriptor.nameFromCompiler);

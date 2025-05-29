@@ -66,6 +66,7 @@
 #include <transformations/op_conversions/softmax_decomposition.hpp>
 #include <transformations/rt_info/fused_names_attribute.hpp>
 #include <transformations/utils/utils.hpp>
+#include <openvino/core/rt_info/weightless_caching_attributes.hpp>
 
 #include "graph.hpp"
 #include "intel_npu/common/filtered_config.hpp"
@@ -520,9 +521,27 @@ std::vector<std::shared_ptr<IGraph>> DriverCompilerAdapter::compileWS(const std:
                                              /* blobAllocatedByPlugin = */ false,
                                              config));
 
-    // Temporary solution: OV passes are copied here in order to increase the chances of matching the weights of the
-    // ov::Model object with the init inputs
-    runOVPasses(model);
+    
+    bool isWeightlessCacheAttributeFound = false;
+    for (auto&& ov_node : model->get_ordered_ops()) {
+        if (!ov::is_type<ov::op::v0::Constant>(ov_node)) {
+            continue;
+        }
+
+        if (auto it = ov_node->get_rt_info().find(ov::WeightlessCacheAttribute::get_type_info_static());
+            it != ov_node->get_rt_info().end()) {
+            isWeightlessCacheAttributeFound = true;
+        }
+    }
+
+    if(!isWeightlessCacheAttributeFound) {
+        std::cout << "Attention! No weightless cache attribute found in the model. Have to run nGraph passes...." << std::endl;
+        // Temporary solution: OV passes are copied here in order to increase the chances of matching the weights of the
+        // ov::Model object with the init inputs
+        runOVPasses(model);
+    } else {
+        std::cout << "Weightless cache attribute found in the model. No need to run nGraph passes." << std::endl;
+    }
 
     return graphs;
 }
