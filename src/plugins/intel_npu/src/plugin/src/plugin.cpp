@@ -64,6 +64,7 @@
 #include <transformations/op_conversions/softmax_decomposition.hpp>
 #include <transformations/rt_info/fused_names_attribute.hpp>
 #include <transformations/utils/utils.hpp>
+#include <openvino/core/rt_info/weightless_caching_attributes.hpp>
 
 #include "compiled_model.hpp"
 #include "compiler_adapter_factory.hpp"
@@ -925,7 +926,26 @@ std::shared_ptr<ov::ICompiledModel> Plugin::import_model(std::istream& origStrea
                 OPENVINO_THROW("Attempted to load a weightless compiled model, but no weights have been provided");
             }
 
-            runOVPasses(originalModel);
+            bool isWeightlessCacheAttributeFound = false;
+            for (auto&& ov_node : originalModel->get_ordered_ops()) {
+                if (!ov::is_type<ov::op::v0::Constant>(ov_node)) {
+                    continue;
+                }
+
+                if (auto it = ov_node->get_rt_info().find(ov::WeightlessCacheAttribute::get_type_info_static());
+                    it != ov_node->get_rt_info().end()) {
+                    isWeightlessCacheAttributeFound = true;
+                }
+            }
+
+            if(!isWeightlessCacheAttributeFound) {
+                std::cout << "Attention! No weightless cache attribute found in the model. Have to run nGraph passes...." << std::endl;
+                // Temporary solution: OV passes are copied here in order to increase the chances of matching the weights of the
+                // ov::Model object with the init inputs
+                runOVPasses(originalModel);
+            } else {
+                std::cout << "Weightless cache attribute found in the model. No need to run nGraph passes." << std::endl;
+            }
 
             if (!localConfig.get<BENCHMARK_INIT>()) {
                 const std::shared_ptr<ov::Model> modelDummy =
