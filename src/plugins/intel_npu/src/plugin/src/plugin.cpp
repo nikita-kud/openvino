@@ -13,6 +13,7 @@
 #include "intel_npu/common/icompiler_adapter.hpp"
 #include "intel_npu/common/igraph.hpp"
 #include "intel_npu/common/itt.hpp"
+#include "intel_npu/common/passes.hpp"
 #include "intel_npu/config/npuw.hpp"
 #include "intel_npu/config/options.hpp"
 #include "intel_npu/utils/zero/zero_init.hpp"
@@ -20,6 +21,7 @@
 #include "npuw/compiled_model.hpp"
 #include "npuw/llm_compiled_model.hpp"
 #include "npuw/serialization.hpp"
+#include "openvino/core/rt_info/weightless_caching_attributes.hpp"
 #include "openvino/op/constant.hpp"
 #include "openvino/op/parameter.hpp"
 #include "openvino/runtime/intel_npu/properties.hpp"
@@ -34,6 +36,9 @@ namespace {
 const std::vector<size_t> CONSTANT_NODE_DUMMY_SHAPE{1};
 
 const char* NPU_PLUGIN_LIB_NAME = "openvino_intel_npu_plugin";
+constexpr std::string_view WEIGHTS_EXTENSION = ".bin";
+constexpr std::string_view XML_EXTENSION = ".xml";
+constexpr std::string_view ONNX_EXTENSION = ".onnx";
 
 /**
  * @brief Creates an "ov::Model" object which contains only the given "parameter" and "result" nodes.
@@ -49,23 +54,40 @@ const char* NPU_PLUGIN_LIB_NAME = "openvino_intel_npu_plugin";
  * @returns The dummy "ov::Model" composed of "parameter" and "result" nodes built using the given descriptors.
  */
 std::shared_ptr<ov::Model> create_dummy_model(const std::vector<IODescriptor>& inputDescriptors,
-                                              const std::vector<IODescriptor>& outputDescriptors) {
+                                              const std::vector<IODescriptor>& outputDescriptors,
+                                              const bool benchmarkInit = false) {
     ov::ParameterVector parameters;
     ov::ResultVector results;
 
     for (const IODescriptor& inputDescriptor : inputDescriptors) {
-        if (inputDescriptor.isStateInput || inputDescriptor.isStateOutput || inputDescriptor.isShapeTensor) {
-            continue;
+        if (!benchmarkInit) {
+            if (inputDescriptor.isStateInput || inputDescriptor.isStateOutput || inputDescriptor.isShapeTensor ||
+                inputDescriptor.isInitInputWeights || inputDescriptor.isMainInputWeights) {
+                continue;
+            }
+
+            std::shared_ptr<ov::op::v0::Parameter> parameter = std::make_shared<ov::op::v0::Parameter>(
+                inputDescriptor.precision,
+                inputDescriptor.shapeFromIRModel.has_value() ? *inputDescriptor.shapeFromIRModel
+                                                             : inputDescriptor.shapeFromCompiler);
+            parameter->set_friendly_name(inputDescriptor.nodeFriendlyName);
+            parameter->output(0).get_tensor().set_names(inputDescriptor.outputTensorNames);
+            parameters.push_back(parameter);
+        } else {
+            if (inputDescriptor.isStateInput || inputDescriptor.isStateOutput || inputDescriptor.isShapeTensor ||
+                inputDescriptor.isMainInputWeights) {
+                continue;
+            }
+
+            std::shared_ptr<ov::op::v0::Parameter> parameter = std::make_shared<ov::op::v0::Parameter>(
+                inputDescriptor.precision,
+                inputDescriptor.shapeFromIRModel.has_value() ? *inputDescriptor.shapeFromIRModel
+                                                             : inputDescriptor.shapeFromCompiler);
+            parameter->set_friendly_name(inputDescriptor.nameFromCompiler);
+            parameter->output(0).get_tensor().set_names(
+                std::unordered_set<std::string>{inputDescriptor.nameFromCompiler});
+            parameters.push_back(std::move(parameter));
         }
-
-        std::shared_ptr<ov::op::v0::Parameter> parameter = std::make_shared<ov::op::v0::Parameter>(
-            inputDescriptor.precision,
-            inputDescriptor.shapeFromIRModel.has_value() ? *inputDescriptor.shapeFromIRModel
-                                                         : inputDescriptor.shapeFromCompiler);
-
-        parameter->set_friendly_name(inputDescriptor.nodeFriendlyName);
-        parameter->output(0).get_tensor().set_names(inputDescriptor.outputTensorNames);
-        parameters.push_back(std::move(parameter));
     }
 
     // The "result" nodes require a parent node in order to satisfy the API conventions. Additionally, a dummy shape for
@@ -73,22 +95,42 @@ std::shared_ptr<ov::Model> create_dummy_model(const std::vector<IODescriptor>& i
     // constant can't have dynamic shape). The dummy tensor was also brought in order to register the correct,
     // potentially dynamic, output shape.
     for (const IODescriptor& outputDescriptor : outputDescriptors) {
-        if (outputDescriptor.isStateInput || outputDescriptor.isStateOutput || outputDescriptor.isShapeTensor) {
-            continue;
+        if (!benchmarkInit) {
+            if (outputDescriptor.isStateInput || outputDescriptor.isStateOutput || outputDescriptor.isShapeTensor ||
+                outputDescriptor.isInitOutputWeights) {
+                continue;
+            }
+
+            std::shared_ptr<ov::Node> constantDummy =
+                std::make_shared<ov::op::v0::Constant>(outputDescriptor.precision, CONSTANT_NODE_DUMMY_SHAPE);
+
+            const std::shared_ptr<ov::descriptor::Tensor>& tensorDummy =
+                std::make_shared<ov::descriptor::Tensor>(outputDescriptor.precision,
+                                                         outputDescriptor.shapeFromCompiler,
+                                                         outputDescriptor.outputTensorNames);
+
+            auto& result = results.emplace_back(std::make_shared<ov::op::v0::Result>(constantDummy));
+            result->output(0).set_tensor_ptr(tensorDummy);
+
+            result->set_friendly_name(outputDescriptor.nodeFriendlyName);
+        } else {
+            if (outputDescriptor.isStateInput || outputDescriptor.isStateOutput || outputDescriptor.isShapeTensor) {
+                continue;
+            }
+
+            std::shared_ptr<ov::Node> constantDummy =
+                std::make_shared<ov::op::v0::Constant>(outputDescriptor.precision, CONSTANT_NODE_DUMMY_SHAPE);
+
+            const std::shared_ptr<ov::descriptor::Tensor>& tensorDummy = std::make_shared<ov::descriptor::Tensor>(
+                outputDescriptor.precision,
+                outputDescriptor.shapeFromCompiler,
+                std::unordered_set<std::string>{outputDescriptor.nameFromCompiler});
+
+            auto& result = results.emplace_back(std::make_shared<ov::op::v0::Result>(constantDummy));
+            result->output(0).set_tensor_ptr(tensorDummy);
+
+            result->set_friendly_name(outputDescriptor.nameFromCompiler);
         }
-
-        std::shared_ptr<ov::Node> constantDummy =
-            std::make_shared<ov::op::v0::Constant>(outputDescriptor.precision, CONSTANT_NODE_DUMMY_SHAPE);
-
-        const std::shared_ptr<ov::descriptor::Tensor>& tensorDummy = std::make_shared<ov::descriptor::Tensor>(
-            outputDescriptor.precision,
-            outputDescriptor.shapeFromIRModel.has_value() ? *outputDescriptor.shapeFromIRModel
-                                                          : outputDescriptor.shapeFromCompiler,
-            outputDescriptor.outputTensorNames);
-
-        auto& result = results.emplace_back(std::make_shared<ov::op::v0::Result>(constantDummy));
-        result->output(0).set_tensor_ptr(tensorDummy);
-        result->set_friendly_name(outputDescriptor.nodeFriendlyName);
     }
 
     return std::make_shared<ov::Model>(results, parameters);
@@ -125,6 +167,25 @@ static ov::intel_npu::CompilerType resolveCompilerType(const FilteredConfig base
     }
     // if there is no compiler_type provided = use base_config value
     return base_conf.get<COMPILER_TYPE>();
+}
+
+std::shared_ptr<ov::Model> store_weightless_cache_attribute_occurrence(const std::shared_ptr<const ov::Model>& model) {
+    auto clonedModel = model->clone();
+
+    for (auto&& ov_node : clonedModel->get_ordered_ops()) {
+        if (!ov::is_type<ov::op::v0::Constant>(ov_node)) {
+            continue;
+        }
+
+        if (auto it = ov_node->get_rt_info().find(ov::WeightlessCacheAttribute::get_type_info_static());
+            it != ov_node->get_rt_info().end()) {
+            clonedModel->set_rt_info(true, "any_weightless_cache_attribute_present");
+            return clonedModel;
+        }
+    }
+
+    clonedModel->set_rt_info(false, "any_weightless_cache_attribute_present");
+    return clonedModel;
 }
 
 }  // namespace
@@ -180,6 +241,7 @@ void Plugin::init_options() {
 
     REGISTER_OPTION(LOG_LEVEL);
     REGISTER_OPTION(CACHE_DIR);
+    REGISTER_OPTION(CACHE_MODE);
     REGISTER_OPTION(DEVICE_ID);
     REGISTER_OPTION(NUM_STREAMS);
     REGISTER_OPTION(PERF_COUNT);
@@ -215,6 +277,10 @@ void Plugin::init_options() {
     REGISTER_OPTION(DISABLE_VERSION_CHECK);
     REGISTER_OPTION(MODEL_PTR);
     REGISTER_OPTION(BATCH_COMPILER_MODE_SETTINGS);
+    REGISTER_OPTION(WEIGHTLESS_BLOB);
+    REGISTER_OPTION(SEPARATE_WEIGHTS_VERSION);
+    REGISTER_OPTION(WS_COMPILE_CALL_NUMBER);
+    REGISTER_OPTION(BENCHMARK_INIT);
     if (_backend) {
         if (_backend->isCommandQueueExtSupported()) {
             REGISTER_OPTION(TURBO);
@@ -481,13 +547,30 @@ std::shared_ptr<ov::ICompiledModel> Plugin::compile_model(const std::shared_ptr<
         }
     }
 
-    auto originalModel = model->clone();
-
     OV_ITT_TASK_NEXT(PLUGIN_COMPILE_MODEL, "compile");
+
+    if (localConfig.get<WEIGHTLESS_BLOB>() && !localConfig.get<CACHE_DIR>().empty()) {
+        // If OV caching is enabled, then weights separation is performed only if the user opted for optimizing the size
+        // of the binary object
+        localConfig.update({{ov::intel_npu::weightless_blob.name(),
+                             (localConfig.get<CACHE_MODE>() == ov::CacheMode::OPTIMIZE_SIZE) ? "YES" : "NO"}});
+    }
+
     std::shared_ptr<intel_npu::IGraph> graph;
+
     try {
         _logger.debug("performing compile");
-        graph = compiler->compile(model->clone(), localConfig);
+
+        if (!localConfig.get<WEIGHTLESS_BLOB>()) {
+            graph = compiler->compile(model->clone(), localConfig);
+        } else {
+            auto begin = std::chrono::steady_clock::now();
+            graph = compiler->compileWS(store_weightless_cache_attribute_occurrence(model), localConfig);
+            auto end = std::chrono::steady_clock::now();
+            std::cout << "compiler->compileWS() call "
+                      << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]"
+                      << std::endl;
+        }
     } catch (const std::exception& ex) {
         OPENVINO_THROW(ex.what());
     } catch (...) {
@@ -611,32 +694,11 @@ std::shared_ptr<ov::ICompiledModel> Plugin::import_model(std::istream& origStrea
     std::shared_ptr<ov::ICompiledModel> compiledModel;
 
     try {
-        const bool skipCompatibility = localConfig.get<DISABLE_VERSION_CHECK>();
-        size_t blobSize = MetadataBase::getFileSize(stream);
-        if (!skipCompatibility) {
-            auto storedMeta = read_metadata_from(stream);
-            if (!storedMeta->is_compatible()) {
-                OPENVINO_THROW("Incompatible blob version!");
-            }
-            blobSize = storedMeta->get_blob_size();
-        }
-        if (tensorFromProperty == false) {  // tensor was not received from ov::compiled_blob property, copy from stream
-            tensor = ov::Tensor(ov::element::u8, ov::Shape{blobSize});
-            if (blobSize > static_cast<decltype(blobSize)>(std::numeric_limits<std::streamsize>::max())) {
-                OPENVINO_THROW("Blob size is too large to be represented on a std::streamsize!");
-            }
-            stream.read(tensor.data<char>(), static_cast<std::streamsize>(blobSize));
-        } else {
-            tensor = ov::Tensor(tensor,
-                                ov::Coordinate{0},
-                                ov::Coordinate{blobSize});  // ROI tensor to skip NPU plugin metadata
-        }
-        auto graph = compiler->parse(std::move(tensor), !tensorFromProperty, localConfig);
-        graph->update_network_name("net" + std::to_string(_compiledModelLoadCounter++));
+        const std::shared_ptr<IGraph> graph =
+            parse(stream, tensor, compiler, tensorFromProperty, localConfig, properties);
 
         const std::shared_ptr<ov::Model> modelDummy =
             create_dummy_model(graph->get_metadata().inputs, graph->get_metadata().outputs);
-
         compiledModel = std::make_shared<CompiledModel>(modelDummy, shared_from_this(), device, graph, localConfig);
     } catch (const std::exception& ex) {
         OPENVINO_THROW("Can't import network: ", ex.what());
@@ -647,6 +709,115 @@ std::shared_ptr<ov::ICompiledModel> Plugin::import_model(std::istream& origStrea
     OV_ITT_TASK_SKIP(PLUGIN_IMPORT_MODEL);
 
     return compiledModel;
+}
+
+std::shared_ptr<IGraph> Plugin::parse(std::istream& stream,
+                                      const ov::Tensor& tensorBig,
+                                      const std::unique_ptr<ICompilerAdapter>& compiler,
+                                      const bool tensorFromProperty,
+                                      const Config& config,
+                                      const ov::AnyMap& properties) const {
+    uint64_t mainSize;
+    std::optional<std::vector<uint64_t>> initSizes;
+
+    const bool skipCompatibility = config.get<DISABLE_VERSION_CHECK>();
+    if (!skipCompatibility) {
+        auto storedMeta = read_metadata_from(stream);
+        if (!storedMeta->is_compatible()) {
+            OPENVINO_THROW("Incompatible blob version!");
+        }
+
+        size_t accumulator = 0;
+        initSizes = storedMeta->get_init_sizes();
+        mainSize = initSizes.has_value() ? storedMeta->get_blob_size() -
+                                               std::accumulate(initSizes->begin(), initSizes->end(), accumulator)
+                                         : storedMeta->get_blob_size();
+    } else {
+        _logger.info("Blob compatibility check skipped.");
+        mainSize = MetadataBase::getFileSize(stream);
+    }
+
+    ov::Tensor tensorMain;
+    if (tensorFromProperty == false) {  // tensor was not received from ov::compiled_blob property, copy from stream
+        tensorMain = ov::Tensor(ov::element::u8, ov::Shape{mainSize});
+        stream.read(tensorMain.data<char>(), mainSize);
+    } else {
+        tensorMain = ov::Tensor(tensorBig,
+                                ov::Coordinate{0},
+                                ov::Coordinate{mainSize});  // ROI tensor to skip NPU plugin metadata
+    }
+
+    std::shared_ptr<ov::Model> originalModel;
+    std::vector<ov::Tensor> tensorsInits;
+    const bool weightsSeparationEnabled = initSizes.has_value();
+
+    if (weightsSeparationEnabled) {
+        // Read the init compiled models as well
+        size_t cursorPosition = mainSize;
+        ov::Tensor tensorInit;
+        for (uint64_t initSize : initSizes.value()) {
+            if (tensorFromProperty == false) {
+                tensorInit = ov::Tensor(ov::element::u8, ov::Shape{initSize});
+                stream.read(tensorInit.data<char>(), initSize);
+            } else {
+                tensorInit =
+                    ov::Tensor(tensorBig, ov::Coordinate{cursorPosition}, ov::Coordinate{cursorPosition + initSize});
+            }
+            tensorsInits.push_back(tensorInit);
+            cursorPosition += initSize;
+        }
+
+        // Retrieve the ov::Model used for compilation. This is required for extracting and matching the weights
+        if (config.get<MODEL_PTR>()) {
+            originalModel = properties.at(ov::hint::model.name()).as<std::shared_ptr<ov::Model>>();
+        } else if (!config.get<WEIGHTS_PATH>().empty()) {
+            const std::string weightsPath = config.get<WEIGHTS_PATH>();
+            const size_t weightsPathLength = weightsPath.length();
+            std::string xmlPath = weightsPath;
+
+            if (weightsPathLength > WEIGHTS_EXTENSION.length() &&
+                weightsPath.compare(weightsPathLength - WEIGHTS_EXTENSION.length(),
+                                    WEIGHTS_EXTENSION.length(),
+                                    WEIGHTS_EXTENSION) == 0) {
+                xmlPath.replace(weightsPathLength - WEIGHTS_EXTENSION.length(),
+                                WEIGHTS_EXTENSION.length(),
+                                XML_EXTENSION);
+            } else if (weightsPathLength <= ONNX_EXTENSION.length() ||
+                       weightsPath.compare(weightsPathLength - ONNX_EXTENSION.length(),
+                                           ONNX_EXTENSION.length(),
+                                           ONNX_EXTENSION)) {
+                OPENVINO_THROW("Invalid path to the weights: ",
+                               weightsPath,
+                               ". A \".bin\" or \".onnx\" extension was expected.");
+            }
+
+            originalModel = get_core()->read_model(xmlPath, weightsPath, properties);
+        } else {
+            OPENVINO_THROW("Attempted to load a weightless compiled model, but no weights have been provided");
+        }
+
+        originalModel = store_weightless_cache_attribute_occurrence(originalModel);
+
+        // If "WeightlessCacheAttribute" fields have not been added to the Constant nodes, then we have to fallback to
+        // the
+        // approach that relies on running the common OV passes inside the plugin as well
+        const ov::RTMap& runtimeInfoMap = originalModel->get_rt_info();
+        const auto& weightlessCacheAttributeMatch = runtimeInfoMap.find("any_weightless_cache_attribute_present");
+        if (weightlessCacheAttributeMatch == runtimeInfoMap.end() ||
+            !weightlessCacheAttributeMatch->second.as<bool>()) {
+            // Temporary solution: OV passes are copied here in order to increase the chances of matching the weights of
+            // the ov::Model object with the init inputs
+            runOVPasses(originalModel);
+        }
+    }
+
+    auto graph = compiler->parse(std::move(tensorMain),
+                                 !tensorFromProperty,
+                                 config,
+                                 weightsSeparationEnabled ? std::make_optional(std::move(tensorsInits)) : std::nullopt,
+                                 weightsSeparationEnabled ? std::make_optional(originalModel) : std::nullopt);
+    graph->update_network_name("net" + std::to_string(_compiledModelLoadCounter++));
+    return graph;
 }
 
 std::shared_ptr<ov::ICompiledModel> Plugin::import_model(std::istream& stream,

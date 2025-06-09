@@ -321,8 +321,50 @@ struct CACHE_DIR final : OptionBase<CACHE_DIR, std::string> {
 };
 
 //
-// LOADED_FROM_CACHE
+// CACHE_MODE
 //
+
+struct CACHE_MODE final : OptionBase<CACHE_MODE, ov::CacheMode> {
+    static std::string_view key() {
+        return ov::cache_mode.name();
+    }
+
+    static constexpr std::string_view getTypeName() {
+        return "ov::CacheMode";
+    }
+
+    static ov::CacheMode defaultValue() {
+        return ov::CacheMode::OPTIMIZE_SIZE;
+    }
+
+    static bool isPublic() {
+        return true;
+    }
+
+    static ov::PropertyMutability mutability() {
+        return ov::PropertyMutability::RW;
+    }
+
+    static OptionMode mode() {
+        return OptionMode::RunTime;
+    }
+
+    static ov::CacheMode parse(std::string_view val) {
+        if (val == "OPTIMIZE_SIZE") {
+            return ov::CacheMode::OPTIMIZE_SIZE;
+        } else if (val == "OPTIMIZE_SPEED") {
+            return ov::CacheMode::OPTIMIZE_SPEED;
+        }
+
+        OPENVINO_THROW("Value '", val, "'is not a valid CACHE_MODE option");
+    }
+
+    static std::string toString(const ov::CacheMode& val) {
+        std::stringstream strStream;
+        strStream << val;
+        return strStream.str();
+    }
+};
 
 struct LOADED_FROM_CACHE final : OptionBase<LOADED_FROM_CACHE, bool> {
     static std::string_view key() {
@@ -1404,6 +1446,110 @@ struct MODEL_PTR final : OptionBase<MODEL_PTR, std::shared_ptr<const ov::Model>>
 
     static ov::PropertyMutability mutability() {
         return ov::PropertyMutability::RW;
+    }
+};
+
+//
+// WEIGHTLESS_BLOB
+//
+struct WEIGHTLESS_BLOB final : OptionBase<WEIGHTLESS_BLOB, bool> {
+    static std::string_view key() {
+        return ov::intel_npu::weightless_blob.name();
+    }
+
+    static bool defaultValue() {
+        return true;
+    }
+
+    static OptionMode mode() {
+        return OptionMode::CompileTime;
+    }
+};
+
+//
+// SEPARATE_WEIGHTS_VERSION
+//
+struct SEPARATE_WEIGHTS_VERSION final : OptionBase<SEPARATE_WEIGHTS_VERSION, uint32_t> {
+    static std::string_view key() {
+        return ov::intel_npu::separate_weights_version.name();
+    }
+
+    static uint32_t defaultValue() {
+        return 3;
+    }
+
+    static uint32_t parse(std::string_view val) {
+        int val_i = -1;
+        try {
+            val_i = std::stoi(val.data());
+            if (val_i >= 0) {
+                return val_i;
+            } else {
+                throw std::logic_error("wrong val");
+            }
+        } catch (const std::exception&) {
+            OPENVINO_THROW("Wrong value of ",
+                           val.data(),
+                           " for property key ",
+                           ov::intel_npu::separate_weights_version.name(),
+                           ". Expected only positive integer numbers");
+        }
+    }
+
+    static OptionMode mode() {
+        return OptionMode::CompileTime;
+    }
+};
+
+//
+// BENCHMARK_INIT
+//
+struct BENCHMARK_INIT final : OptionBase<BENCHMARK_INIT, bool> {
+    static std::string_view key() {
+        return ov::intel_npu::benchmark_init.name();
+    }
+
+    static bool defaultValue() {
+        return false;
+    }
+
+    static OptionMode mode() {
+        return OptionMode::RunTime;
+    }
+};
+
+//
+// WS_COMPILE_CALL_NUMBER
+//
+struct WS_COMPILE_CALL_NUMBER final : OptionBase<WS_COMPILE_CALL_NUMBER, uint32_t> {
+    static std::string_view key() {
+        return ov::intel_npu::ws_compile_call_number.name();
+    }
+
+    static uint32_t defaultValue() {
+        return 0;
+    }
+
+    static uint32_t parse(std::string_view val) {
+        int val_i = -1;
+        try {
+            val_i = std::stoi(val.data());
+            if (val_i >= 0) {
+                return val_i;
+            } else {
+                throw std::logic_error("wrong val");
+            }
+        } catch (const std::exception&) {
+            OPENVINO_THROW("Wrong value of ",
+                           val.data(),
+                           " for property key ",
+                           ov::intel_npu::ws_compile_call_number.name(),
+                           ". Expected only positive integer numbers");
+        }
+    }
+
+    static OptionMode mode() {
+        return OptionMode::CompileTime;
     }
 };
 
