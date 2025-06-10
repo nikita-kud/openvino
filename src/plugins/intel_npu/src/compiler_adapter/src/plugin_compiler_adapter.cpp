@@ -217,7 +217,8 @@ std::vector<std::shared_ptr<IGraph>> PluginCompilerAdapter::compileWS(const std:
         const std::shared_ptr<ov::Model> originalModel = model->clone();
         std::shared_ptr<ov::Model> targetModel = model;
         size_t i = 0;
-        while (auto networkDescription = _compiler->compileWS_v3(targetModel, config, i++)) {
+        while (true) {
+            auto networkDescription = std::make_shared<NetworkDescription>(_compiler->compileWS_v3(targetModel, config, i++));
             if (isInit(networkDescription->metadata.name)) {
                 initDscrs.push_back(networkDescription);
                 targetModel = originalModel->clone();
