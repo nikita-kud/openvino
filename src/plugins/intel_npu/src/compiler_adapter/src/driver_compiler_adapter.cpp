@@ -23,6 +23,8 @@
 #include "openvino/core/rt_info/weightless_caching_attributes.hpp"
 #include "weightless_graph.hpp"
 
+#include "mem_usage.hpp"
+
 namespace {
 
 constexpr std::string_view INPUTS_PRECISIONS_KEY = "--inputs_precisions";
@@ -285,6 +287,7 @@ std::shared_ptr<IGraph> DriverCompilerAdapter::compileWS(const std::shared_ptr<o
     ze_graph_handle_t mainGraphHandle;
     size_t callNumber = 0;
 
+    auto compile_model_mem_start = get_peak_memory_usage();
     while (true) {
         _logger.debug("compileWS iteration %d", callNumber);
 
@@ -330,6 +333,12 @@ std::shared_ptr<IGraph> DriverCompilerAdapter::compileWS(const std::shared_ptr<o
             break;
         }
     }
+    auto compile_model_mem_end = get_peak_memory_usage();
+
+    std::cout << "Start of compilation memory usage: Peak " << compile_model_mem_start << " KB" << std::endl;
+    std::cout << "End of compilation memory usage: Peak " << compile_model_mem_end << " KB" << std::endl;
+    std::cout << "Compilation memory usage: Peak " << compile_model_mem_end - compile_model_mem_start << " KB"
+               << std::endl;
 
     // If "WeightlessCacheAttribute" fields have not been added to the Constant nodes, then we have to fallback to the
     // approach that relies on running the common OV passes inside the plugin as well
