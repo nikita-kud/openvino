@@ -143,6 +143,8 @@ std::shared_ptr<IGraph> PluginCompilerAdapter::compileWS(const std::shared_ptr<o
         return starts_with(name, "main");
     };
 
+    std::cout << "SEPARATE_WEIGHTS_VERSION: " << config.get<SEPARATE_WEIGHTS_VERSION>() << std::endl;
+
     switch (config.get<SEPARATE_WEIGHTS_VERSION>()) {
     case 1: {
         std::vector<std::shared_ptr<NetworkDescription>> initMainNetworkDescriptions =
@@ -162,7 +164,8 @@ std::shared_ptr<IGraph> PluginCompilerAdapter::compileWS(const std::shared_ptr<o
         const std::shared_ptr<ov::Model> originalModel = model->clone();
         std::shared_ptr<ov::Model> targetModel = model;
         size_t i = 0;
-        while (auto networkDescription = _compiler->compileWS_v3(targetModel, config, i++)) {
+        while (true) {
+            auto networkDescription = std::make_shared<NetworkDescription>(_compiler->compileWS_v3(targetModel, config, i++));
             if (isInit(networkDescription->metadata.name)) {
                 initNetworkDescriptions.push_back(networkDescription);
                 targetModel = originalModel->clone();
