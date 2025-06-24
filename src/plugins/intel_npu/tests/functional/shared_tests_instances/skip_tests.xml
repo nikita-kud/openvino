@@ -893,14 +893,13 @@ Example:
         </filters>
     </skip_config>
 
-    <!-- CACHE_MODE is not supported on NPU, update test with correct property to make weightless compiled model -->
+    <!-- EISW-162037 -->
     <skip_config>
         <message>compiled_blob test use `CACHE_MOD` which is not supported on NPU</message>
         <filters>
-            <filter>.*OVCompiledModelBaseTest.*import_from_.*_blob.*</filter>
-            <filter>.*OVCompiledModelBaseTest.*compile_from_.*_blob.*</filter>
-            <filter>.*OVCompiledModelBaseTest.*compile_from_cached_weightless_blob.*</filter>
-            <filter>.*OVCompiledModelBaseTest.*use_blob_hint_.*</filter>
+            <filter>.*OVCompiledModelBaseTest.*compile_from_regular_blob/.*_blob.*</filter>
+            <filter>.*OVCompiledModelBaseTest.*compile_from_weightless_blob/.*</filter>
+            <filter>.*smoke_Hetero_BehaviorTests/OVCompiledModelBaseTest.*use_blob_hint_which_fails_load_from_cache.*</filter>
         </filters>
     </skip_config>
 

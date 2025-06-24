@@ -62,6 +62,13 @@ private:
                                      const std::unique_ptr<ICompilerAdapter>& compiler,
                                      OptionMode mode = OptionMode::Both) const;
 
+    std::shared_ptr<IGraph> parse(std::istream& stream,
+                                  const ov::Tensor& tensorBig,
+                                  const std::unique_ptr<ICompilerAdapter>& compiler,
+                                  const bool tensorFromProperty,
+                                  const Config& localConfig,
+                                  const ov::AnyMap& properties) const;
+
     std::unique_ptr<BackendsRegistry> _backendsRegistry;
 
     //  _backend might not be set by the plugin; certain actions, such as offline compilation, might be supported.
