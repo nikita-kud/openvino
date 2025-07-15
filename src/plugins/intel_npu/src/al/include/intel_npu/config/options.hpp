@@ -1305,7 +1305,7 @@ struct WEIGHTLESS_BLOB final : OptionBase<WEIGHTLESS_BLOB, bool> {
     }
 
     static bool defaultValue() {
-        return false;
+        return true;
     }
 
     static OptionMode mode() {
