@@ -23,6 +23,7 @@
 #include "input_model.hpp"
 #include "onnx_common/onnx_model_validator.hpp"
 #include "openvino/core/so_extension.hpp"
+#include "openvino/core/rt_info/weightless_caching_attributes.hpp"
 #include "openvino/frontend/exception.hpp"
 #include "openvino/frontend/extension/telemetry.hpp"
 #include "openvino/frontend/manager.hpp"
@@ -165,6 +166,20 @@ std::shared_ptr<ov::Model> FrontEnd::convert(const InputModel::Ptr& input_model)
     }
 
     normalize(converted_model);
+
+    size_t constantId = 0;
+    for (auto&& node : converted_model->get_ordered_ops()) {
+        if (ov::is_type<ov::op::v0::Constant>(node)) {
+            const auto cstNode = ov::as_type_ptr<ov::op::v0::Constant>(node);
+            ov::RTMap& nodeRuntimeInfoMap = node->get_rt_info();
+
+            const std::string constantIdString = std::to_string(constantId++);
+            nodeRuntimeInfoMap[ov::WeightlessCacheAttribute::get_type_info_static()] = ov::WeightlessCacheAttribute(
+                    cstNode->get_byte_size(), constantId,
+                    cstNode->get_element_type());
+        }
+    }
+
     return converted_model;
 }
 
