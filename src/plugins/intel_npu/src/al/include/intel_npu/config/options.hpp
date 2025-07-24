@@ -1331,7 +1331,7 @@ struct SEPARATE_WEIGHTS_VERSION final : OptionBase<SEPARATE_WEIGHTS_VERSION, ov:
     }
 
     static ov::intel_npu::WSVersion defaultValue() {
-        return ov::intel_npu::WSVersion::ITERATIVE;
+        return ov::intel_npu::WSVersion::ONE_SHOT;
     }
 
     static ov::intel_npu::WSVersion parse(std::string_view val) {
