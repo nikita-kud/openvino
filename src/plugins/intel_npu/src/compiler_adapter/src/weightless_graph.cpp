@@ -16,6 +16,7 @@
 #include "openvino/core/rt_info/weightless_caching_attributes.hpp"
 #include "openvino/core/type/element_iterator.hpp"
 #include "openvino/runtime/make_tensor.hpp"
+#include <fstream>
 
 #define USE_SINGLE_THREADED_RUN_INIT 0
 
@@ -358,12 +359,14 @@ void WeightlessGraph::initialize(const Config& config) {
             OPENVINO_THROW("Unknown value for WorkloadType!");
         }
     }
-
-#if USE_SINGLE_THREADED_RUN_INIT
+       
+    std::cout << "run_init_single_threaded\n";
     run_init_single_threaded();
-#else
-    run_init_multi_threaded();
-#endif
+//#if USE_SINGLE_THREADED_RUN_INIT
+//    run_init_single_threaded();
+//#else
+//    run_init_multi_threaded();
+//#endif
 
     if (_initBlobs != std::nullopt) {  // Do not release the graph when compiling a model on the CiD path, and we don't
                                        // have a blob. We may need it to export later.
@@ -462,10 +465,15 @@ WeightlessGraph::OutputData WeightlessGraph::allocate_outputs(const size_t initI
         initOutputsViewTensorsMap.emplace(descriptor.nameFromCompiler, hostTensor._ptr);
         offset +=
             ov::element::get_memory_size(descriptor.precision, shape_size(descriptor.shapeFromCompiler.to_shape()));
+
+        if (offset > 379110749) {
+            std::cout << "descriptor.nameFromCompiler :" << descriptor.nameFromCompiler << "\n";
+        }
     }
 
     return {initOutputsViewTensorsVector, initOutputsAllocatedTensor, initOutputsViewTensorsMap};
 }
+
 
 void WeightlessGraph::run_init_single_threaded() {
     auto constants = get_all_constants_in_topological_order(_model, _logger);
@@ -473,9 +481,20 @@ void WeightlessGraph::run_init_single_threaded() {
     for (size_t initIndex = 0; initIndex < _initsGraphDesc.size(); ++initIndex) {
         auto [initInputsViewTensors, initInputsAllocatedTensor] = allocate_inputs(initIndex, constants);
 
-        // We don't need these anymore, potentially save some memory
-        _model = nullptr;
-        constants = {};
+        std::cout << "write input\n";
+        if (_initsGraphDesc.size() == 1) {
+            std::ofstream("dump_input_1init.bin", std::ios::binary)
+               .write(reinterpret_cast<const char*>(initInputsAllocatedTensor->data()),
+                      initInputsAllocatedTensor->get_byte_size());
+        } else {
+            auto mode = initIndex == 0 ? std::ios::binary : std::ios::binary | std::ios::app;
+            std::ofstream("dump_input_2inits.bin", mode)
+                .write(reinterpret_cast<const char*>(initInputsAllocatedTensor->data()),
+                       initInputsAllocatedTensor->get_byte_size());
+        }
+
+        
+        std::cout << "allocate output\n";
         auto [initOutputsViewTensors, initOutputsAllocatedTensor, initOutputsViewTensorsMap] =
             allocate_outputs(initIndex);
 
@@ -485,7 +504,30 @@ void WeightlessGraph::run_init_single_threaded() {
 
         merge_two_maps(_mainInputsViewTensors, initOutputsViewTensorsMap);
         _mainInputsAllocatedTensors.push_back(std::move(initOutputsAllocatedTensor));
+
+        std::cout << "write output\n";
+        if (_initsGraphDesc.size() == 1) {
+            std::cout << "1 Init\n";
+            std::ofstream("dump_output_firstpart_1init.bin", std::ios::binary)
+                .write(reinterpret_cast<const char*>(initOutputsAllocatedTensor->data()),
+                       513049920);
+                        
+            std::ofstream("dump_output_secondpart_1init.bin", std::ios::binary)
+                .write(reinterpret_cast<const char*>(initOutputsAllocatedTensor->data()) + 513049920,
+                       initOutputsAllocatedTensor->get_byte_size() - 513049920);
+        } else {
+            std::cout << "2 Inits\n";
+            auto filename = initIndex == 0 ? "dump_output_firstpart_2init.bin" : "dump_output_secondpart_2init.bin";
+            std::cout << "Init idx: " << initIndex << ", size: " << initOutputsAllocatedTensor->get_byte_size() << std::endl;
+            std::ofstream(filename, std::ios::binary)
+                .write(reinterpret_cast<const char*>(initOutputsAllocatedTensor->data()),
+                       initOutputsAllocatedTensor->get_byte_size());
+        }
+
     }
+
+    // We don't need these anymore, potentially save some memory
+    _model = nullptr;
 }
 
 void WeightlessGraph::run_init_multi_threaded() {
