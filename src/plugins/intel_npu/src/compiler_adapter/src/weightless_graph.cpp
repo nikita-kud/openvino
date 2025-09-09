@@ -274,6 +274,7 @@ std::pair<uint64_t, std::optional<std::vector<uint64_t>>> WeightlessGraph::expor
 }
 
 void WeightlessGraph::initialize(const Config& config) {
+    std::cout << "WeightlessGraph::initialize begin\n"; 
     // Simplified version for init schedules
     const size_t numberOfInits = _initsGraphDesc.size();
     _initsInputDescriptors.resize(numberOfInits);
@@ -358,7 +359,7 @@ void WeightlessGraph::initialize(const Config& config) {
             OPENVINO_THROW("Unknown value for WorkloadType!");
         }
     }
-
+    //run_init_single_threaded();
 #if USE_SINGLE_THREADED_RUN_INIT
     run_init_single_threaded();
 #else
@@ -382,6 +383,7 @@ void WeightlessGraph::initialize(const Config& config) {
     Graph::initialize(config);
 
     set_weights_inputs();
+    std::cout << "WeightlessGraph::initialize end\n";
 }
 
 WeightlessGraph::InputData WeightlessGraph::allocate_inputs(
@@ -472,10 +474,7 @@ void WeightlessGraph::run_init_single_threaded() {
 
     for (size_t initIndex = 0; initIndex < _initsGraphDesc.size(); ++initIndex) {
         auto [initInputsViewTensors, initInputsAllocatedTensor] = allocate_inputs(initIndex, constants);
-
-        // We don't need these anymore, potentially save some memory
-        _model = nullptr;
-        constants = {};
+        
         auto [initOutputsViewTensors, initOutputsAllocatedTensor, initOutputsViewTensorsMap] =
             allocate_outputs(initIndex);
 
@@ -486,14 +485,24 @@ void WeightlessGraph::run_init_single_threaded() {
         merge_two_maps(_mainInputsViewTensors, initOutputsViewTensorsMap);
         _mainInputsAllocatedTensors.push_back(std::move(initOutputsAllocatedTensor));
     }
+
+    // We don't need these anymore, potentially save some memory
+    _model = nullptr;
+    constants = {};
 }
 
 void WeightlessGraph::run_init_multi_threaded() {
-    if (_initsGraphDesc.size() == 1) {
-        _logger.info("::run_init_multi_threaded() for single init - fallback to ::runInit()");
-        run_init_single_threaded();
-        return;
-    }
+    //if (_initsGraphDesc.size() == 1) {
+    //    _logger.info("::run_init_multi_threaded() for single init - fallback to ::runInit()");
+    //    run_init_single_threaded();
+    //    return;
+    //}
+
+    //std::cout << "_initsGraphDesc.size(): " << _initsGraphDesc.size() << std::endl;
+    //for (int initIndex = 0; initIndex < _initsGraphDesc.size(); initIndex++) {
+    //    std::cout << "Number of arguments Init[" << initIndex << "]: " << _initsMetadata.at(initIndex).inputs.size()
+    //              << std::endl;
+    //}
 
     std::unordered_map<std::string, std::shared_ptr<ZeroHostTensor>> weightsInputs;
     std::vector<ov::SoPtr<ZeroHostTensor>> initTensors;
@@ -526,6 +535,8 @@ void WeightlessGraph::run_init_multi_threaded() {
 
             run_pipeline(data.initIndex);
 
+            // std::cout << "pipeline is finished for " << data.initIndex << std::endl;
+
             // TODO: pre-allocate those well in advance? (outside of this loop)
             merge_two_maps(_mainInputsViewTensors, data.outputs.tensorsMap);
             _mainInputsAllocatedTensors.push_back(data.outputs.hostTensor);
@@ -550,16 +561,31 @@ void WeightlessGraph::create_pipeline(const size_t initIndex,
     _initsFences.at(initIndex) = std::make_unique<Fence>(_initsCommandQueue);
 
     size_t io_index = 0;
-    for (const auto& desc : _initsInputDescriptors.at(initIndex)) {
-        void* data = inputTensors.at(io_index++)->data();
-        _zeGraphExt->setGraphArgumentValue(_initsGraphDesc.at(initIndex), desc.idx, static_cast<unsigned char*>(data));
+    try {
+        for (const auto& desc : _initsInputDescriptors.at(initIndex)) {
+            void* data = inputTensors.at(io_index++)->data();
+            _zeGraphExt->setGraphArgumentValue(_initsGraphDesc.at(initIndex),
+                                               desc.idx,
+                                               static_cast<unsigned char*>(data));
+        }
+    } catch (const std::exception& ex) {
+        std::cout << "!! failed to set input for Init: " << initIndex << std::endl;
+        throw ex;
     }
 
     io_index = 0;
-    for (const auto& desc : _initsOutputDescriptors.at(initIndex)) {
-        void* data = outputTensors.at(io_index++)->data();
-        _zeGraphExt->setGraphArgumentValue(_initsGraphDesc.at(initIndex), desc.idx, static_cast<unsigned char*>(data));
+    try {
+        for (const auto& desc : _initsOutputDescriptors.at(initIndex)) {
+            void* data = outputTensors.at(io_index++)->data();
+            _zeGraphExt->setGraphArgumentValue(_initsGraphDesc.at(initIndex),
+                                               desc.idx,
+                                               static_cast<unsigned char*>(data));
+        }
+    } catch (const std::exception& ex) {
+        std::cout << "!! failed to set output for Init: " << initIndex << std::endl;
+        throw ex;
     }
+
 
     _initsCommandLists.at(initIndex)->appendGraphExecute(
         static_cast<ze_graph_handle_t>(_initsGraphDesc.at(initIndex)._handle),
@@ -592,7 +618,13 @@ void WeightlessGraph::set_weights_inputs() {
                         weightsInputName,
                         "\" has no correspondent within the init outputs.");
         std::shared_ptr<ov::ITensor> weightsTensor = _mainInputsViewTensors.at(weightsInputName);
-        set_argument_value(desc.idx, static_cast<unsigned char*>(weightsTensor->data()));
+
+        try {
+            set_argument_value(desc.idx, static_cast<unsigned char*>(weightsTensor->data()));
+        } catch (const std::exception& ex) {
+            std::cout << "!! failed to set input for Main\n";
+            throw ex;
+        }
     }
 }
 

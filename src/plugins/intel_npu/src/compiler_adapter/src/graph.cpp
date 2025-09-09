@@ -197,6 +197,8 @@ void Graph::initialize(const Config& config) {
     _inputDescriptors.shrink_to_fit();
     _outputDescriptors.shrink_to_fit();
 
+    std::cout << "[Graph::initialize] Main's inputDescriptors size: " << _inputDescriptors.size() << std::endl;
+
     _commandQueueGroupOrdinal = zeroUtils::findCommandQueueGroupOrdinal(_zeroInitStruct->getDevice(),
                                                                         ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COMPUTE);
 
