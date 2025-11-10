@@ -17,6 +17,7 @@
 #include "openvino/core/rt_info/weightless_caching_attributes.hpp"
 #include "openvino/runtime/make_tensor.hpp"
 
+#include <chrono>
 #define USE_SINGLE_THREADED_RUN_INIT 0
 
 namespace intel_npu {
@@ -360,11 +361,18 @@ void WeightlessGraph::initialize(const Config& config) {
         }
     }
 
+    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+
 #if USE_SINGLE_THREADED_RUN_INIT
     run_init_single_threaded();
 #else
     run_init_multi_threaded();
 #endif
+
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+    std::cout << "run_init() call: "
+                      << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms]"
+                      << std::endl;
 
     if (_initBlobs != std::nullopt) {  // Do not release the graph when compiling a model on the CiD path, and we don't
                                        // have a blob. We may need it to export later.
@@ -468,6 +476,7 @@ WeightlessGraph::OutputData WeightlessGraph::allocate_outputs(const size_t initI
 }
 
 void WeightlessGraph::run_init_single_threaded() {
+    std:: cout << "Running init schedules in single-threaded mode." << std::endl;
     auto constants = get_all_constants_in_topological_order(_model, _wgLogger);
     const size_t numberOfInits = _initsGraphDesc.size();
 
@@ -498,6 +507,7 @@ void WeightlessGraph::run_init_multi_threaded() {
         return;
     }
 
+    std:: cout << "Running init schedules in multi-threaded mode." << std::endl;
     std::unordered_map<std::string, std::shared_ptr<ZeroHostTensor>> weightsInputs;
     std::vector<ov::SoPtr<ZeroHostTensor>> initTensors;
 
