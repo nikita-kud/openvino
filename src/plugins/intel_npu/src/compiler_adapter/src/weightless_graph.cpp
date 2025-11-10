@@ -18,7 +18,7 @@
 #include "openvino/runtime/make_tensor.hpp"
 
 #include <chrono>
-#define USE_SINGLE_THREADED_RUN_INIT 0
+#define USE_SINGLE_THREADED_RUN_INIT 1
 
 namespace intel_npu {
 
