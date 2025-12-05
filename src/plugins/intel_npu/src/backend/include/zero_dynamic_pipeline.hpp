@@ -205,6 +205,7 @@ protected:
     std::vector<std::shared_ptr<Event>> _events;
     bool _sync_output_with_fences = true;
     Logger _logger;
+    bool _reuseCmdLists = false;
 
     // const std::vector<std::vector<std::shared_ptr<ZeroTensor>>> _levelZeroInputTensors;
     // const std::vector<std::shared_ptr<ZeroTensor>> _levelZeroOutputTensors;

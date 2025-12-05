@@ -52,6 +52,13 @@ _levelZeroOutputTensors(output_tensors)*/
                         _init_structs->getCommandQueueDdiTable().version() >= ZE_MAKE_VERSION(1, 1),
                     "In-order execution doesn't work in case synchronization of the inferences is done using events");
 
+    auto reuseCmdList = getenv("HOST_COMPILE_REUSE_CMDLIST");
+    if (reuseCmdList != nullptr && std::string(reuseCmdList) == "1") {
+        _reuseCmdLists = true;
+    }
+
+     std::cout << "_reuseCmdLists: " << _reuseCmdLists << std::endl;
+
     if (_config.has<PERF_COUNT>() && _config.get<PERF_COUNT>()) {
         auto profiling_pool =
             std::make_shared<zeroProfiling::ProfilingPool>(_init_structs, _graph, zeroProfiling::POOL_SIZE);
@@ -195,6 +202,7 @@ void DynamicPipeline::PipelinedCommandLists::bind(IRGraph* graph) {
 }
 
 void DynamicPipeline::push() {
+    static bool isFirst = true;
     _logger.debug("DynamicPipeline - push() started");
     //_logger.debug("inputs.size = %d, outputs.size=%d", _levelZeroInputTensors.size(), _levelZeroOutputTensors.size());
 
@@ -224,52 +232,64 @@ void DynamicPipeline::push() {
         }
 
         auto& command_lists = _command_lists.at(i);
-        auto graphArguments = command_lists->getBinding();
-        _logger.debug("Inputs info for IRGraph:");
-        for (auto& memType : graphArguments._inputs) {
-            _logger.debug(" sizes: %d*%d*%d*%d",
-                          memType->memRef.sizes[0],
-                          memType->memRef.sizes[1],
-                          memType->memRef.sizes[2],
-                          memType->memRef.sizes[3]);
-            _logger.debug(" strides: %d*%d*%d*%d",
-                          memType->memRef.strides[0],
-                          memType->memRef.strides[1],
-                          memType->memRef.strides[2],
-                          memType->memRef.strides[3]);
-            _logger.debug(" basePtr: %p data: %p offset: %d",
-                          memType->memRef.basePtr,
-                          memType->memRef.data,
-                          memType->memRef.offset);
-            _logger.debug("");
-        }
-        _logger.debug("Outputs info for IRGraph:");
-        for (auto& memType : graphArguments._outputs) {
-            _logger.debug(" sizes: %d*%d*%d*%d",
-                          memType->memRef.sizes[0],
-                          memType->memRef.sizes[1],
-                          memType->memRef.sizes[2],
-                          memType->memRef.sizes[3]);
-            _logger.debug(" strides: %d*%d*%d*%d",
-                          memType->memRef.strides[0],
-                          memType->memRef.strides[1],
-                          memType->memRef.strides[2],
-                          memType->memRef.strides[3]);
-            _logger.debug(" basePtr: %p data: %p offset: %d",
-                          memType->memRef.basePtr,
-                          memType->memRef.data,
-                          memType->memRef.offset);
-            _logger.debug("");
-        }
+        if (_reuseCmdLists == false || isFirst) {
+            auto graphArguments = command_lists->getBinding();
+            _logger.debug("Inputs info for IRGraph:");
+            for (auto& memType : graphArguments._inputs) {
+                _logger.debug(" sizes: %d*%d*%d*%d",
+                              memType->memRef.sizes[0],
+                              memType->memRef.sizes[1],
+                              memType->memRef.sizes[2],
+                              memType->memRef.sizes[3]);
+                _logger.debug(" strides: %d*%d*%d*%d",
+                              memType->memRef.strides[0],
+                              memType->memRef.strides[1],
+                              memType->memRef.strides[2],
+                              memType->memRef.strides[3]);
+                _logger.debug(" basePtr: %p data: %p offset: %d",
+                              memType->memRef.basePtr,
+                              memType->memRef.data,
+                              memType->memRef.offset);
+                _logger.debug("");
+            }
+            _logger.debug("Outputs info for IRGraph:");
+            for (auto& memType : graphArguments._outputs) {
+                _logger.debug(" sizes: %d*%d*%d*%d",
+                              memType->memRef.sizes[0],
+                              memType->memRef.sizes[1],
+                              memType->memRef.sizes[2],
+                              memType->memRef.sizes[3]);
+                _logger.debug(" strides: %d*%d*%d*%d",
+                              memType->memRef.strides[0],
+                              memType->memRef.strides[1],
+                              memType->memRef.strides[2],
+                              memType->memRef.strides[3]);
+                _logger.debug(" basePtr: %p data: %p offset: %d",
+                              memType->memRef.basePtr,
+                              memType->memRef.data,
+                              memType->memRef.offset);
+                _logger.debug("");
+            }
 
-        dynamic_cast<IRGraph*>(_graph.get())
-            ->execute(_init_structs,
-                      command_lists->getBinding(),
-                      command_lists->getHandles(),
-                      commandQueueHandle,
-                      fence,
-                      event,
-                      nullptr);
+            dynamic_cast<IRGraph*>(_graph.get())
+                ->execute(_init_structs,
+                          command_lists->getBinding(),
+                          command_lists->getHandles(),
+                          commandQueueHandle,
+                          fence,
+                          event,
+                          nullptr);
+            isFirst = false;
+
+        } else {
+            auto& cmdLists = command_lists->_commandListHandles;
+            auto cmdQueue = _graph->get_command_queue();
+            auto result =
+                zeCommandQueueExecuteCommandLists(cmdQueue->handle(), cmdLists.size(), cmdLists.data(), fence);
+            if (result != ZE_RESULT_SUCCESS) {
+                OPENVINO_THROW("Failed to submit command lists");
+            }
+        }
     }
 
     _logger.debug("DynamicPipeline - push() completed");
