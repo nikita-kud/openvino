@@ -85,6 +85,15 @@ struct IODescriptor {
     bool isMainInputWeights = false;
 
     /**
+     * @brief If "true", the current object describes an auxiliary input added by the compiler (prefixed with
+     * "nsb_io_").
+     *
+     * @details Such inputs are not part of the original IR model and must not be exposed to the user through the
+     * compiled model. Their buffers are allocated internally by the plugin.
+     */
+    bool isNsbIo = false;
+
+    /**
      * @brief Points towards a related descriptor.
      * @details The related descriptors are defined by (state input, state output) or (dynamic tensor, shape tensor)
      * pairs.

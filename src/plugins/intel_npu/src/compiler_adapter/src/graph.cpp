@@ -345,7 +345,8 @@ std::optional<size_t> Graph::determine_batch_size() {
                 return false;
             }
 
-            if (!descriptor.isStateInput && !descriptor.isStateOutput && !descriptor.isShapeTensor) {
+            if (!descriptor.isStateInput && !descriptor.isStateOutput && !descriptor.isShapeTensor &&
+                !descriptor.isNsbIo) {
                 if (shapeFromIRModel.is_dynamic() || shapeFromIRModel.rank().get_length() == 0 ||
                     *shapeFromIRModel.begin() != candidateBatchSize) {
                     return false;
