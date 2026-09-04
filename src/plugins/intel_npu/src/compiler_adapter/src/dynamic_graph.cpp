@@ -84,6 +84,7 @@ static IODescriptor getIODescriptor(const ze_graph_argument_properties_3_t& arg,
     bool isInitInputWeights = false;
     bool isInitOutputWeights = false;
     bool isMainInputWeights = false;
+    bool isNsbIo = false;
     if (isInput && isStateInputName(nameFromCompiler)) {
         nameFromCompiler = nameFromCompiler.substr(READVALUE_PREFIX.length());
         isStateInput = true;
@@ -102,6 +103,9 @@ static IODescriptor getIODescriptor(const ze_graph_argument_properties_3_t& arg,
     } else if (isInput && isMainInputWeightsName(nameFromCompiler)) {
         nameFromCompiler = nameFromCompiler.substr(MAIN_INPUT_WEIGHTS_PREFIX.length());
         isMainInputWeights = true;
+    } else if (isInput && isNsbIoName(nameFromCompiler)) {
+        nameFromCompiler = nameFromCompiler.substr(NSB_IO_PREFIX.length());
+        isNsbIo = true;
     }
 
     return {std::move(nameFromCompiler),
@@ -113,6 +117,7 @@ static IODescriptor getIODescriptor(const ze_graph_argument_properties_3_t& arg,
             isInitInputWeights,
             isInitOutputWeights,
             isMainInputWeights,
+            isNsbIo,
             std::nullopt,
             arg.debug_friendly_name,
             std::move(outputTensorNames),

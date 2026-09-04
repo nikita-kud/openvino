@@ -19,6 +19,7 @@ constexpr std::string_view SHAPE_TENSOR_PREFIX = "vpux_ie_shape_";
 constexpr std::string_view INIT_INPUT_WEIGHTS_PREFIX = "vpux_ow_";
 constexpr std::string_view INIT_OUTPUT_WEIGHTS_PREFIX = "vpux_tw_";
 constexpr std::string_view MAIN_INPUT_WEIGHTS_PREFIX = "vpux_tw_";
+constexpr std::string_view NSB_IO_PREFIX = "nsb_io_";
 
 inline bool nameHasPrefix(std::string_view name, std::string_view prefix) {
     return !name.compare(0, prefix.length(), prefix);
@@ -42,6 +43,9 @@ inline bool isInitOutputWeightsName(std::string_view name) {
 }
 inline bool isMainInputWeightsName(std::string_view name) {
     return nameHasPrefix(name, MAIN_INPUT_WEIGHTS_PREFIX);
+}
+inline bool isNsbIoName(std::string_view name) {
+    return nameHasPrefix(name, NSB_IO_PREFIX);
 }
 
 }  // namespace intel_npu

@@ -148,8 +148,8 @@ ZeroInferRequest::ZeroInferRequest(const std::shared_ptr<ZeroInitStructsHolder>&
     size_t ioIndex = 0;
     for (const IODescriptor& inputDescriptor : _metadata.inputs) {
         // Tensors for regular inputs will be allocated later, only for ports that were not set by the user.
-        // Allocating only tensors for shapes and states.
-        if (!(inputDescriptor.isStateInput || inputDescriptor.isShapeTensor)) {
+        // Allocating only tensors for shapes, states and auxiliary compiler-added (nsb_io) inputs.
+        if (!(inputDescriptor.isStateInput || inputDescriptor.isShapeTensor || inputDescriptor.isNsbIo)) {
             ++ioIndex;
             continue;
         }
