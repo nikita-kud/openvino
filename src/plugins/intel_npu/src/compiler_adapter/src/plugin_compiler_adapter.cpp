@@ -78,7 +78,10 @@ std::shared_ptr<IGraph> PluginCompilerAdapter::compile(const std::shared_ptr<con
     _logger.debug("compile end");
 
     const auto& compilationMode = config.get<COMPILATION_MODE>();
-    const bool isHostCompile = compilationMode.find("HostCompile") != std::string::npos;
+    // HostCompile_NSB fuses its subgraphs into a plain ELF blob, so it is handled like DefaultHW here
+    // (no VM runtime / DynamicGraph involved), unlike the other HostCompile_* modes.
+    const bool isHostCompile = compilationMode.find("HostCompile") != std::string::npos &&
+                                compilationMode.find("HostCompile_NSB") == std::string::npos;
     const BlobType blobType =
         isHostCompile ? (compilationMode.find("HostCompile_Interpreter") != std::string::npos ? BlobType::BYTECODE
                                                                                               : BlobType::LLVM)
